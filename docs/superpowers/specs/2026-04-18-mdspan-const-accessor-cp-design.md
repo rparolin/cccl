@@ -169,6 +169,17 @@ Each of the three plug-in points exists so a **different person** can opt in:
 same type as `const_accessor_for_t<A>`. Falls out of the "element_type is
 add_const_t<…>" rule.
 
+**"Const" follows the convention for const member functions in C++.** The
+const counterpart's `reference` is non-writable — you cannot assign to or
+through it. Side effects during reads (I/O, logging, lazy caching,
+mutable-state updates in the accessor) are allowed, analogous to what a
+const member function is permitted to do (a const method may log, touch
+`mutable` members, or call non-const services; it just cannot modify the
+object's non-`mutable` data). Read stability is not a guarantee from the
+standard; accessors that require stable reads should document that
+guarantee themselves. No new UB or erroneous-behavior rules are
+introduced — this is `const` as C++ already defines it.
+
 ---
 
 ## Accessing the const view — `std::element_cast<T>(md)`
@@ -424,12 +435,16 @@ rather than propose in parallel.
 
 ## Open questions / out-of-scope
 
-- **Accessors with no usable const version**: stateful proxies with
-  side-effectful `reference::operator*` may not have a meaningful
-  "read-only" counterpart. They opt out by providing no
-  `const_accessor_type` and no trait specialization.
+- **Accessors with no meaningful const version**: some accessors simply
+  don't have a semantically sensible read-only counterpart — e.g., an
+  accessor over a write-only device or a streaming source. They opt
+  out by providing no `const_accessor_type` and no trait specialization;
   `std::element_cast<const T>(md)` is then ill-formed for them — a
-  compile error, not a silent wrong result.
+  compile error, not a silent wrong result. (Note: accessors whose
+  `reference::operator*` has side effects are **not** automatically in
+  this category — see the semantic contract section; side effects are
+  allowed in the const counterpart just as they are in a const member
+  function.)
 - **`vector<bool>::reference`**: same cross-const `common_reference_with`
   gap, but not used as an mdspan accessor reference and scoped out.
 - **Broader `element_cast<T>`**: allowing element-type conversion
