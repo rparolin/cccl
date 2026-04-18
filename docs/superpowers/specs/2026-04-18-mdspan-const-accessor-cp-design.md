@@ -1,6 +1,6 @@
 # Customization point for producing a const version of an mdspan accessor
 
-**Status**: Draft — design sections complete, pending user review.
+**Status**: Draft — scope revised after reverse-course discussion. Primitive is `std::element_cast<T>` (not `std::as_const`); includes cross-const `basic_common_reference` fixes for `atomic_ref` (B1 scope).
 **Author**: Rob Parolin (rparolin@nvidia.com)
 **Date**: 2026-04-18
 **Scope**: WG21 paper + libcudacxx prototype (in parallel)
@@ -29,8 +29,10 @@ to participate in a read-only view.
 
 Separately, cross-const `common_reference_with` fails for proxy references
 (see godbolt tests with `atomic_ref<T>` vs `const T&`, and
-`vector<bool>::reference` vs `const bool&`). This is **out of scope** for
-this paper; a companion paper should address it.
+`vector<bool>::reference` vs `const bool&`). **This paper closes that gap
+for `atomic_ref`** (see the dedicated section below). Without it, an
+mdspan-over-proxy-reference cannot be used in standard algorithms that
+check `common_reference_with` across the two reference types.
 
 ---
 
@@ -41,12 +43,14 @@ this paper; a companion paper should address it.
    with a type.
 2. Let accessor authors **optionally** add one line
    (`using const_accessor_type = …;`) to tell that trait what to use.
-3. Overload **`std::as_const`** (from `<utility>`) for mdspan so it uses
-   the trait to produce a read-only mdspan over the same data. The overload
-   is declared in `<mdspan>`, keeping mdspan independent of `std::ranges`.
+3. Add **`std::element_cast<T>`** — a new freestanding function template
+   in `<mdspan>` that returns an mdspan whose `element_type` is T (over
+   the same data). When T is `add_const_t<element_type>`, it uses the
+   trait to produce the read-only counterpart accessor. Declared in
+   `<mdspan>`, keeping mdspan independent of `std::ranges`.
 
-The trait and the `std::as_const` overload are the only required additions
-to the standard.
+The trait and the `std::element_cast<T>` function template are the only
+required additions to the standard.
 Everything accessor authors or end users write is optional — those are just
 the three ways to plug into the trait.
 
@@ -57,7 +61,7 @@ the three ways to plug into the trait.
 | Piece | Who writes it | Required? |
 |---|---|---|
 | `std::const_accessor_for<A>` trait | Standard library (one-time addition) | **Yes** |
-| `std::as_const(mdspan)` overload (declared in `<mdspan>`) | Standard library (one-time addition) | **Yes** |
+| `std::element_cast<T>(mdspan)` function template (declared in `<mdspan>`) | Standard library (one-time addition) | **Yes** |
 | `A::const_accessor_type` nested alias | Accessor author | Optional — a helper hook |
 | Specialization of `const_accessor_for` in `namespace std` | User / third party | Optional — for accessors you can't modify |
 
@@ -65,7 +69,7 @@ the three ways to plug into the trait.
 
 ## How the trait decides, in plain English
 
-When `std::as_const(md)` asks `const_accessor_for<A>` for an answer:
+When `std::element_cast<const T>(md)` asks `const_accessor_for<A>` for an answer:
 
 1. **Did the accessor author write a `const_accessor_type` alias on `A`?**
    Use that.
@@ -90,7 +94,7 @@ that compiles. Done.
 
 ```cpp
 mdspan<double, Ext> writable{ptr, …};
-auto readonly = std::as_const(writable);   // mdspan<const double, Ext>
+auto readonly = std::element_cast<const double>(writable);   // mdspan<const double, Ext>
 ```
 
 No changes to the accessor. Works for free.
@@ -111,7 +115,7 @@ struct atomic_accessor {
 };
 
 mdspan<double, Ext, Lay, atomic_accessor<double>> writable{ptr, …};
-auto readonly = std::as_const(writable);
+auto readonly = std::element_cast<const double>(writable);
 // → mdspan<const double, Ext, Lay, atomic_accessor<const double>>
 ```
 
@@ -128,7 +132,7 @@ namespace std {
 }
 
 mdspan<double, Ext, Lay, vendor::gpu_accessor<double>> writable{…};
-auto readonly = std::as_const(writable);   // works
+auto readonly = std::element_cast<const double>(writable);   // works
 ```
 
 ---
@@ -167,43 +171,51 @@ add_const_t<…>" rule.
 
 ---
 
-## Accessing the const view — `std::as_const(md)`
+## Accessing the const view — `std::element_cast<T>(md)`
 
-**The plain story**: overload the existing `std::as_const` (from
-`<utility>`) for mdspan, with the overload declared in `<mdspan>`. When
-called with an mdspan, it returns a new mdspan whose element type is
-`const T` and whose accessor is `const_accessor_for_t<A>`, viewing the
-same data.
+**The plain story**: add a new freestanding function template
+`std::element_cast<T>` in `<mdspan>`. Called with an mdspan, it returns
+a new mdspan whose `element_type` is T (over the same data). T is
+restricted to a cv-qualification change of the input's `element_type` —
+no element-type conversion in this paper.
 
-**mdspan stays independent of `std::ranges` and `std::views`.** mdspan is
-not a range — no iterators, doesn't model `view` or `range` concepts — and
-the design deliberately avoids coupling it to the ranges library. The
-freestanding `std::as_const` from `<utility>` is the simpler, namespace-
-clean precedent.
+**Allowed target types**: for an input mdspan with `element_type = U`,
+the target T must be either:
+
+- **`U`** — identity cast (returns an mdspan of the same type, same data).
+- **`add_const_t<U>`** — the const-add cast. This is the primary use
+  case motivating this paper.
+
+Other choices (e.g., `double` when `U == float`, or `volatile U`) are
+ill-formed in this revision; see the *Future direction* note below.
 
 **Signature** (conceptual):
 
 ```cpp
 namespace std {
-  // Existing in <utility>:
-  template<class T> constexpr add_const_t<T>& as_const(T& t) noexcept;
-  template<class T> void as_const(const T&&) = delete;
-
-  // New overload, declared in <mdspan>:
   template<class T, class E, class L, class A>
-    requires /* const_accessor_for_t<A> is valid */
-  constexpr mdspan<add_const_t<T>, E, L, const_accessor_for_t<A>>
-  as_const(const mdspan<T, E, L, A>& md);
+    requires (is_same_v<T, typename A::element_type>
+              || is_same_v<T, add_const_t<typename A::element_type>>)
+  constexpr mdspan<T, E, L, /* see below */>
+  element_cast(const mdspan<typename A::element_type, E, L, A>& md);
 }
 ```
 
-**Body** (roughly):
+Where the result accessor type is:
+
+- `A` when `T == element_type` (identity cast).
+- `const_accessor_for_t<A>` when `T == add_const_t<element_type>`
+  (const-add cast).
+
+**Body** (const-add case):
 
 ```cpp
 template<class T, class E, class L, class A>
-constexpr auto as_const(const mdspan<T, E, L, A>& md) {
+constexpr auto element_cast(const mdspan<typename A::element_type, E, L, A>& md)
+  requires (is_same_v<T, add_const_t<typename A::element_type>>)
+{
   using C      = const_accessor_for_t<A>;
-  using Result = mdspan<add_const_t<T>, E, L, C>;
+  using Result = mdspan<T, E, L, C>;
   return Result{
     typename C::data_handle_type{ md.data_handle() },   // const handle
     md.mapping(),                                        // layout unchanged
@@ -212,39 +224,46 @@ constexpr auto as_const(const mdspan<T, E, L, A>& md) {
 }
 ```
 
-**Why not a new member function?** `std::as_const` is already a freestanding
-function in the standard. Introducing `mdspan::as_const()` as a member
-would invent a new mechanism when the existing name fits the intent ("make
-this read-only"). Reusing the name keeps the user-facing surface consistent
-with the rest of the standard.
+**Why a new name, not `std::as_const`**: see *Considered alternatives*
+below. Short version: `std::as_const<T>(T&)` from `<utility>` is shallow;
+an mdspan overload would be deep. Same name, two different semantics.
+A dedicated `element_cast<T>` makes the element-type change explicit at
+the call site and avoids the collision.
 
-**Note on overload semantics.** The existing `std::as_const(T&)` returns
-`add_const_t<T>&` (shallow — makes the *reference* const). The new overload
-for mdspan returns a **new value of a different type** —
-`mdspan<const T, …, const_accessor_for_t<A>>` (deep — changes *element*
-access). Same name, two semantics. This is honest overloading: the user
-intent is the same ("make this read-only"); the mechanism differs because
-mdspan's "read-only" is encoded in its element type, not in the const-ness
-of the mdspan object. Overload resolution dispatches unambiguously on the
-argument type. The partial-ordering and the `const T&&`-deleted overload
-should naturally yield the mdspan overload for mdspan arguments; the
-precise wording is a spec detail for WG21.
+**Why not `std::views::element_cast`**: mdspan is not a range. Keeping
+mdspan independent of `std::ranges` / `std::views` preserves clean
+responsibility boundaries between library facilities.
 
-**Why not add a converting constructor to mdspan?** mdspan's existing
-converting-constructor template already covers this case whenever the
+**Why freestanding, not a member function**: every other named cast in
+the standard (`std::bit_cast<T>`, `std::const_cast<T>`,
+`std::static_cast<T>`, `std::reinterpret_cast<T>`) is freestanding. A
+member `mdspan::cast<T>()` would be the odd one out and make composition
+with other freestanding operations (e.g., `submdspan`) less uniform.
+
+**Why not add a converting constructor to mdspan**: mdspan's existing
+converting-constructor template already covers cases where the
 underlying accessor provides an implicit `A → const_accessor_for_t<A>`
 conversion. For example, `default_accessor<T> → default_accessor<const T>`
 is already implicit in C++26, so
 ```cpp
 mdspan<const double, E> ct = mt;   // compiles today for default_accessor
 ```
-just works. `std::as_const(md)` is the explicit opt-in that also works
+just works. `std::element_cast<T>` is the explicit opt-in that also works
 when the implicit path isn't available (custom accessors, third-party
-specializations).
+trait specializations).
 
-**Constraint**: the overload is removed from overload resolution when
-`const_accessor_for_t<A>` is ill-formed; calls produce a normal
-no-viable-overload error.
+**Constraint**: the function template is removed from overload resolution
+when T is not cv-reachable from `element_type` (i.e., not equal to
+`element_type` or its const-added form), or when
+`const_accessor_for_t<A>` is ill-formed for the const-add case.
+Ill-formed calls produce a normal no-viable-overload error.
+
+**Future direction** (out of scope for this paper): a broader
+`element_cast<T>` that also permits element-type conversion (e.g.,
+`float → double`) or `volatile`. Each raises its own design questions
+(alignment, compute-vs-view, layout compatibility, volatile-access
+semantics) and deserves a separate paper. The restriction here leaves
+the door open — the name already supports the broader interpretation.
 
 ---
 
@@ -285,9 +304,10 @@ accessors just ensures they never depend on the fallback path.
 
 ## Composition with `submdspan`
 
-`submdspan` and `std::as_const` compose in either order to produce the
-same mdspan type. Users can freely write either
-`submdspan(std::as_const(md))` or `std::as_const(submdspan(md))`.
+`submdspan` and `std::element_cast<const T>` compose in either order to
+produce the same mdspan type. Users can freely write either
+`submdspan(std::element_cast<const T>(md))` or
+`std::element_cast<const T>(submdspan(md))`.
 
 **Why it works**: `submdspan` switches the accessor to its
 `offset_policy`. For the two compositions to agree, we need
@@ -325,49 +345,194 @@ both sides of the diagram above agree.
   `const_accessor_type = default_accessor<add_const_t<ElementType>>`.
 - `aligned_accessor.h` — add
   `const_accessor_type = aligned_accessor<add_const_t<ElementType>, ByteAlignment>`.
-- `mdspan.h` — add the `cuda::std::as_const(mdspan)` overload.
+- `mdspan.h` — add the `cuda::std::element_cast<T>` function template.
 - **New**: `const_accessor_for.h` — the trait with
   member-then-substitution resolution; included from
   `cuda/std/mdspan`.
 
-**Namespace**: libcudacxx lives in `cuda::std::`, so the overload is
-`cuda::std::as_const(md)` and the trait is
+**Namespace**: libcudacxx lives in `cuda::std::`, so the function is
+`cuda::std::element_cast<T>(md)` and the trait is
 `cuda::std::const_accessor_for<A>`.
 
 **Test coverage** (under the existing mdspan test area):
 
-- Scenario 1 — default_accessor: type-check `cuda::std::as_const(md)`.
+- Scenario 1 — default_accessor: type-check
+  `cuda::std::element_cast<const double>(md)`.
 - Scenario 2 — custom accessor with `const_accessor_type` member opt-in.
 - Scenario 3 — trait specialization for a "can't-modify" accessor.
-- Composition: `submdspan(as_const(md))` and `as_const(submdspan(md))`
-  yield the same type.
-- Constrained-out behavior: accessor with no valid const counterpart
-  produces a clean compile error at the call site.
+- Composition: `submdspan(element_cast<const T>(md))` and
+  `element_cast<const T>(submdspan(md))` yield the same type.
+- Constrained-out behavior:
+  - accessor with no valid const counterpart produces a clean compile
+    error at the call site;
+  - `element_cast<int>(mdspan<double>)` (not cv-reachable) is
+    ill-formed.
+- Identity case: `element_cast<T>(md)` where `T == element_type`
+  returns the same mdspan type.
 
 **ABI impact**: none. Nested type aliases have no storage/vtable
-impact; the trait and overload are header-only additions.
+impact; the trait and function template are header-only additions.
 
 **Out of scope for the prototype**:
 
-- Cross-const `common_reference_with` specializations (companion paper).
-- Generalized `element_cast<T>` (separate design question).
+- `basic_common_reference` specializations in `<atomic>` (they belong
+  in the paper's wording but are outside the prototype scope — the
+  prototype validates the mdspan-side CP only).
+- Broader `element_cast<T>` that handles element-type conversion
+  (separate design question).
+
+---
+
+## Cross-const `basic_common_reference` specializations for `atomic_ref`
+
+**The gap.** For proxy references like `atomic_ref<T>`, the test
+`common_reference_with<atomic_ref<T>, const T&>` (and mirror cases)
+fails today — no `basic_common_reference` specialization covers them.
+The same failure is visible for
+`common_reference_with<atomic_ref<T>, atomic_ref<const T>>` (and its
+mirror). See the godbolt referenced in the motivation.
+
+Consequence: standard algorithms that reason about the two reference
+types together — anything relying on `indirectly_readable`,
+`indirectly_writable`, or range-adaptor pipelines that interoperate
+const and non-const views — refuse to compile.
+
+**What this paper proposes.** Add `basic_common_reference`
+specializations in `<atomic>` covering the cross-const cases for
+`atomic_ref`:
+
+- `atomic_ref<T>` ⇄ `const T&`
+- `atomic_ref<const T>` ⇄ `T&`
+- `atomic_ref<T>` ⇄ `atomic_ref<const T>`
+
+A handful of specializations, each a few lines. Exact wording to follow
+the structure P3323R1 used for the existing `atomic_ref<T>` ⇄ `T&`
+relationship.
+
+**Scope note.** `vector<bool>::reference` has similar cross-const gaps
+but is out of scope here — it is not used as an mdspan accessor's
+`reference` in practice, and fixing it raises independent questions
+about the design of `vector<bool>`.
+
+**Coordination.** P2689R3 ("Atomic Refs Bound to Memory Orderings &
+Atomic Accessors") is in flight and proposes `basic_atomic_accessor`
+for use with mdspan. Its authors are the natural collaborators here —
+we should coordinate (co-authorship, cross-referencing, or merging)
+rather than propose in parallel.
 
 ---
 
 ## Open questions / out-of-scope
 
-- **Cross-const `common_reference_with`**: proxy references
-  (`atomic_ref<T>` vs `const T&`, `vector<bool>::reference` vs
-  `const bool&`) lack the off-diagonal `basic_common_reference`
-  specializations. Addressing this is the companion paper's job.
 - **Accessors with no usable const version**: stateful proxies with
   side-effectful `reference::operator*` may not have a meaningful
   "read-only" counterpart. They opt out by providing no
-  `const_accessor_type` and no trait specialization. `std::as_const(md)`
-  is then ill-formed for them — a compile error, not a silent wrong
-  result.
-- **Naming — `element_cast<T>`**: a more general facility would handle
-  cv-qualification *and* element-type conversion (e.g., `float` → `const
-  double`). Deliberately deferred; the narrow const-only CP is
-  tractable on its own and leaves room for a future generalization
-  paper.
+  `const_accessor_type` and no trait specialization.
+  `std::element_cast<const T>(md)` is then ill-formed for them — a
+  compile error, not a silent wrong result.
+- **`vector<bool>::reference`**: same cross-const `common_reference_with`
+  gap, but not used as an mdspan accessor reference and scoped out.
+- **Broader `element_cast<T>`**: allowing element-type conversion
+  (`float → double`) or `volatile`-qualification raises independent
+  design questions (alignment, compute vs view, volatile access
+  semantics). Deliberately deferred; the narrow cv-only primitive
+  proposed here leaves room for generalization in a follow-up paper.
+
+---
+
+## Considered alternatives
+
+### Overload `std::as_const` for mdspan
+
+An earlier draft proposed adding an overload of `std::as_const` (from
+`<utility>`) for mdspan, declared in `<mdspan>`:
+
+```cpp
+namespace std {
+  template<class T, class E, class L, class A>
+  constexpr mdspan<add_const_t<T>, E, L, const_accessor_for_t<A>>
+  as_const(const mdspan<T, E, L, A>& md);
+}
+```
+
+**Why rejected**: the name `std::as_const` would end up with two
+meaningfully different semantics:
+
+- `std::as_const<T>(T&)` (existing, `<utility>`) is **shallow** —
+  returns `const T&`.
+- The mdspan overload would be **deep** — returns a *new value of a
+  different type*, with element access producing const.
+
+A reader seeing `std::as_const(md)` would reasonably expect shallow
+behavior and be surprised by the deep result. A dedicated
+`std::element_cast<T>(md)` avoids the collision and makes the element-
+type change explicit at the call site.
+
+### Use `std::views::as_const` for mdspan
+
+Also rejected. `std::views::as_const` lives in `std::ranges::views` and
+is part of the ranges library. mdspan is not a range — no iterators, no
+`view` / `range` concept modeling — and coupling it to `std::ranges`
+would drag mdspan into a library it has no other relationship with.
+Keeping mdspan independent of `std::ranges` preserves clean boundaries
+between library facilities.
+
+### Broader `element_cast<T>` with element-type conversion
+
+A fully general `element_cast<T>(md)` that accepts any compatible T,
+including conversions like `float → double`, was considered but scoped
+out. Element-wise conversion in an mdspan view raises its own
+questions — alignment, compute-vs-view semantics, layout
+compatibility — and deserves a separate paper. The primitive proposed
+here restricts T to cv-qualification changes of `element_type` only;
+the name leaves the door open to a future generalization.
+
+### Member function `mdspan::as_const()` or `mdspan::const_view()`
+
+Rejected. Every named cast in the standard is freestanding
+(`std::bit_cast<T>`, `std::const_cast<T>`, `std::static_cast<T>`,
+`std::reinterpret_cast<T>`), as are range adaptors under `std::views::`.
+A member would be the odd one out and would make composition with other
+freestanding operations (e.g., `submdspan`) less uniform.
+
+### Separate companion paper for `basic_common_reference`
+
+Considered (see "B2" in brainstorming notes): keep this paper focused
+on the mdspan CP and defer the `atomic_ref` cross-const
+`basic_common_reference` fixes to a separate paper. Rejected because the
+motivating case (`atomic_ref<const T>` in mdspan, used alongside the
+non-const original) only works end-to-end when both changes ship
+together. Shipping the CP alone leaves the motivating example
+half-broken. Current scope bundles both (see cross-const section); the
+bundle should still coordinate with P2689R3 authors to avoid parallel
+proposals.
+
+---
+
+## References
+
+- **P3323R1** — *cv-qualified types in atomic and atomic_ref*. Added
+  `atomic_ref<const T>` in C++26; introduced the gap this paper
+  addresses.
+  <https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2024/p3323r1.html>
+
+- **P3860R1** — *Proposed Resolution for NB Comment GB13-309:
+  `atomic_ref<T>` is not convertible to `atomic_ref<const T>`*. Adds
+  the converting constructor; adjacent but does not address
+  `common_reference_with`.
+  <https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p3860r1.html>
+
+- **P2689R3** — *Atomic Refs Bound to Memory Orderings & Atomic
+  Accessors*. Proposes `basic_atomic_accessor` for use with mdspan;
+  natural collaborator for the cross-const `basic_common_reference`
+  specializations.
+  <https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2024/p2689r3.html>
+
+- **LWG 3811** — *`views::as_const` on `ref_view<T>` should return
+  `ref_view<const T>`*. Adjacent `as_const` semantics issue for
+  ranges; confirms the pattern of `as_const` adaptors needing
+  per-case wiring.
+  <https://cplusplus.github.io/LWG/issue3811>
+
+- **LWG Active Issues**.
+  <https://www.open-std.org/jtc1/sc22/wg21/docs/lwg-active.html>
