@@ -56,6 +56,30 @@ the three ways to plug into the trait.
 
 ---
 
+## What "const version of an accessor" means
+
+For an accessor `A` with `element_type = T`, the **const version** `C` of
+`A` (produced by `const_accessor_for<A>`) satisfies:
+
+1. **`C::element_type` is `add_const_t<T>`.**
+2. **`C::reference` is not writable** — you cannot assign through it.
+3. **Reads may have side effects.** `C` follows the convention of C++
+   const member functions — logging, caching, I/O through
+   `reference::operator*` are all permitted.
+4. **Same elements.** An mdspan with accessor `C` views the same elements
+   as the original mdspan with accessor `A` (consequence of `copyable`
+   plus equality-preserving `access` / `offset`).
+5. **Read stability is not guaranteed** unless the accessor documents it
+   — analogous to how a const member function can return different values
+   on successive calls.
+6. **`C::offset_policy` is const-preserving**, so composition with
+   `submdspan` is well-defined in either order.
+
+These are the full requirements. The detailed wording in *Semantic
+contract* (below) builds on this definition.
+
+---
+
 ## Who writes what — required vs optional
 
 | Piece | Who writes it | Required? |
@@ -168,6 +192,13 @@ Each of the three plug-in points exists so a **different person** can opt in:
 **Idempotence**: `const_accessor_for_t<const_accessor_for_t<A>>` denotes the
 same type as `const_accessor_for_t<A>`. Falls out of the "element_type is
 add_const_t<…>" rule.
+
+**Same-elements invariant.** Because accessors and mdspan both model
+`copyable` and mdspan copies view the same elements, the mdspan returned
+by `std::element_cast<T>(md)` views the same elements as `md` (see
+*Same-data guarantee* above). `element_cast` is O(1): no element copy,
+no allocation — it constructs a new mdspan from the input's handle,
+mapping, and accessor.
 
 **"Const" follows the convention for const member functions in C++.** The
 const counterpart's `reference` is non-writable — you cannot assign to or
