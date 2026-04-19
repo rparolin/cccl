@@ -31,8 +31,25 @@ __host__ __device__ void test_default_accessor_composition()
   static_assert(cuda::std::is_same_v<decltype(left), decltype(right)>);
 }
 
+__host__ __device__ void test_aligned_accessor_composition()
+{
+  using E = cuda::std::extents<int, 4, 5>;
+  using A = cuda::std::aligned_accessor<double, 32>;
+  using MD = cuda::std::mdspan<double, E, cuda::std::layout_right, A>;
+  alignas(32) double storage[20]{};
+  MD md{storage, E{}, A{}};
+
+  auto left  = cuda::std::submdspan(cuda::std::element_cast<const double>(md),
+                                    cuda::std::full_extent, 0);
+  auto right = cuda::std::element_cast<const double>(
+                 cuda::std::submdspan(md, cuda::std::full_extent, 0));
+
+  static_assert(cuda::std::is_same_v<decltype(left), decltype(right)>);
+}
+
 int main(int, char**)
 {
   test_default_accessor_composition();
+  test_aligned_accessor_composition();
   return 0;
 }
