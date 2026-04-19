@@ -161,17 +161,65 @@ auto readonly = std::element_cast<const double>(writable);   // works
 
 ---
 
-## Why "hybrid"
+## Why three plug-in points, not one
 
-Each of the three plug-in points exists so a **different person** can opt in:
+The three resolution paths — member hook, trait specialization, and
+substitution fallback — exist because they serve **three different
+audiences**, and **no single path alone covers the cases the other two
+handle**.
 
-- The **accessor author** uses the nested alias (clean, declarative, lives
-  with the type).
-- The **end user** uses the specialization (when the accessor author hasn't
-  opted in and they can't edit the code).
-- The **standard library** uses substitution as a convenient default for
-  simple template-based accessors like `default_accessor`, so nobody has to
-  write anything for the common case.
+### The two explicit paths, and why both are needed
+
+Two of the paths let someone *explicitly* tell the trait what the const
+counterpart is. They are not interchangeable; each applies when the other
+cannot.
+
+**Path 1 — `A::const_accessor_type` member.** For the accessor's
+**author** — someone writing `atomic_accessor<T>` in their own library.
+They add one line inside the class. Clean, declarative, lives with the
+type; no need to reach into `namespace std`.
+
+```cpp
+template<class T>
+struct atomic_accessor {
+  // ...existing members...
+  using const_accessor_type = atomic_accessor<const T>;   // the one line
+};
+```
+
+**Path 2 — `std::const_accessor_for<A>` specialization.** For an
+accessor's **user** — someone consuming `vendor::gpu_accessor<T>` that
+they cannot edit. Since they don't own the type, they can't add a member
+to it; they specialize the trait from outside instead.
+
+```cpp
+namespace std {
+  template<class T>
+  struct const_accessor_for<vendor::gpu_accessor<T>> {
+    using type = vendor::gpu_accessor<const T>;
+  };
+}
+```
+
+These two audiences are genuinely distinct. Dropping Path 1 would force
+accessor authors to specialize a `std::` template from outside their
+class (awkward, and unlike every other accessor customization point).
+Dropping Path 2 would leave users of third-party accessors with no
+recourse when the vendor hasn't opted in.
+
+### The third path: substitution fallback
+
+For the **standard library / common case** — template accessors like
+`default_accessor<T>` where `Tmpl<add_const_t<T>, Rest...>` is the
+obvious, mechanical answer. Nobody has to write anything. It keeps
+the common case trivial while the two explicit paths handle the rest.
+
+### Precedent for member hooks
+
+mdspan already uses member-typed aliases for accessor customization
+(`element_type`, `reference`, `data_handle_type`, `offset_policy`).
+Adding `const_accessor_type` as another member follows that pattern
+rather than inventing a new convention.
 
 ---
 

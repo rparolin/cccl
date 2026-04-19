@@ -84,7 +84,7 @@ For an accessor `A` with `element_type = T`, the **const version** `C` (produced
 5. Read stability is not guaranteed unless the accessor documents it.
 6. `C::offset_policy` is const-preserving, so composition with `submdspan` is well-defined in either order.
 
-No new UB or erroneous behavior is introduced. This is `const` as C++ already defines it.
+This is `const` as C++ already defines it.
 
 ### The customization-point trait
 
@@ -98,12 +98,23 @@ namespace std {
 }
 ```
 
-Resolution (informal):
+Resolution:
 
 - **Member hook**: if `typename A::const_accessor_type` is a valid accessor type, that's the answer.
 - **Substitution fallback**: otherwise, if `A` is `Tmpl<T, Rest...>` for some class template `Tmpl`, the answer is `Tmpl<std::add_const_t<T>, Rest...>` (if well-formed).
 - **User specialization**: a user may specialize `const_accessor_for` in namespace `std` for accessors they do not control.
 - **Ill-formed otherwise**: the primary template has no nested `type` and the call site gets a clean diagnostic.
+
+#### Why both a member hook and a user specialization
+
+The member hook and the user specialization are **not redundant**. They serve two genuinely different audiences, and **neither alone covers the other's case**:
+
+- The **member hook** is for the accessor's **author**. They own the type and add one line inside the class (`using const_accessor_type = …`). Clean, declarative, lives with the type, and does not require reaching into `namespace std`.
+- The **user specialization** is for an accessor's **consumer**. They are using a third-party accessor — `vendor::gpu_accessor<T>` or similar — that they cannot edit. They have no way to add a member to someone else's class, so they specialize the trait from outside instead.
+
+Dropping the member hook would force accessor authors to specialize a `std::` template from outside their own class, which is awkward and inconsistent with every other accessor customization point in `<mdspan>` (`offset_policy`, `element_type`, `reference`, `data_handle_type` are all member-typed aliases). Dropping the user specialization would leave users of third-party accessors with no recourse when the vendor hasn't opted in.
+
+The substitution fallback is the orthogonal third path: a mechanical default for simple template accessors like `default_accessor<T>`, so nobody has to write anything in the common case.
 
 ### The cast function
 
