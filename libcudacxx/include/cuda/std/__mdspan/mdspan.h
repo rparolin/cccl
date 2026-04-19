@@ -582,11 +582,20 @@ _CCCL_HOST_DEVICE mdspan(const typename _AccessorType::data_handle_type, const _
             typename _MappingType::layout_type,
             _AccessorType>;
 
-// cuda::std::element_cast<T>(mdspan) — identity + const-add cases only.
+// cuda::std::element_cast<T>(mdspan) — produces an mdspan whose element_type
+// is T, over the same data as the input.
 //
-// Target T must be cv-reachable from the input mdspan's element_type:
-// either T == element_type (identity) or T == add_const_t<element_type>.
-// Other targets (e.g. float -> double, volatile) are ill-formed.
+// Only two targets are supported:
+//
+//   1. T == element_type               — identity. Returns the input unchanged.
+//   2. T == add_const_t<element_type>  — read-only view. The resulting mdspan's
+//                                        accessor is const_accessor_for_t<A>,
+//                                        which names the const counterpart of
+//                                        the original accessor.
+//
+// This is strictly a cv-qualification cast. Other targets — a different
+// element type (e.g. float -> double) or volatile qualification — are
+// not supported and produce a compile error.
 
 // Identity overload: T == element_type → same mdspan back.
 _CCCL_TEMPLATE(class _T, class _ElementType, class _Extents, class _LayoutPolicy, class _AccessorPolicy)
