@@ -23,7 +23,7 @@ general mechanism:
   `atomic_ref<T>` → `atomic_ref<const T>`).
 
 This gap is motivated directly by C++26's addition of cv qualifiers to
-`atomic_ref` (P3323), and the follow-up conversion fix (P3860). A custom
+`atomic_ref` (P3323R1), and the follow-up conversion fix (P3860R1). A custom
 mdspan accessor whose `reference` type is `atomic_ref<T>` has no way today
 to participate in a read-only view.
 
@@ -311,7 +311,7 @@ the door open — the name already supports the broader interpretation.
 
 ## Explicit opt-in for standard-provided accessors
 
-Even though the trait's substitution fallback (Section 1, step 2) would
+Even though the trait's substitution fallback (step 2 of *How the trait decides*) would
 produce the correct answer for them automatically, the standard's own
 `default_accessor` and `aligned_accessor` carry the nested alias
 explicitly. Reasons: self-documenting in the standard text; removes any
@@ -358,9 +358,10 @@ produce the same mdspan type. Users can freely write either
 const_accessor_for_t<A>::offset_policy == const_accessor_for_t<A::offset_policy>
 ```
 
-which is exactly Section 1's "`C::offset_policy` is const-preserving"
-requirement. No new wording is needed at the `submdspan` spec site — the
-constraint lives with the accessor requirements upstream.
+which is exactly the *Semantic contract* section's "`C::offset_policy`
+is const-preserving" requirement. No new wording is needed at the
+`submdspan` spec site — the constraint lives with the accessor
+requirements upstream.
 
 **Standard-provided accessors satisfy this by construction**:
 
