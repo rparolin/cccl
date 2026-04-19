@@ -31,6 +31,15 @@ __host__ __device__ constexpr bool test()
   using E = cuda::std::extents<size_t, 2>;
   using L = cuda::std::layout_right;
   using A = cuda::std::aligned_accessor<T, sizeof(T)>;
+
+  // type aliases
+  static_assert(cuda::std::is_same_v<typename cuda::std::aligned_accessor<T, sizeof(T)>::offset_policy,
+                                     cuda::std::default_accessor<T>>);
+  static_assert(cuda::std::is_same_v<typename cuda::std::aligned_accessor<T, sizeof(T)>::element_type, T>);
+  static_assert(cuda::std::is_same_v<typename cuda::std::aligned_accessor<T, sizeof(T)>::reference, T&>);
+  static_assert(cuda::std::is_same_v<typename cuda::std::aligned_accessor<T, sizeof(T)>::data_handle_type, T*>);
+  static_assert(cuda::std::is_same_v<typename cuda::std::aligned_accessor<T, sizeof(T)>::const_accessor_type,
+                                     cuda::std::aligned_accessor<cuda::std::add_const_t<T>, sizeof(T)>>);
   A aligned_non_const{};
   cuda::std::aligned_accessor<const T, sizeof(T)> aligned_const{};
   // basic tests

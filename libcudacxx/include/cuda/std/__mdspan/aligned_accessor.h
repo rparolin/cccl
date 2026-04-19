@@ -33,6 +33,7 @@
 #include <cuda/std/__concepts/concept_macros.h>
 #include <cuda/std/__mdspan/default_accessor.h>
 #include <cuda/std/__memory/assume_aligned.h>
+#include <cuda/std/__type_traits/add_const.h>
 #include <cuda/std/__type_traits/is_abstract.h>
 #include <cuda/std/__type_traits/is_array.h>
 #include <cuda/std/__type_traits/is_convertible.h>
@@ -54,10 +55,11 @@ public:
                 "_ElementType must be a complete object type that is neither an abstract class type nor an array "
                 "type.");
 
-  using offset_policy    = default_accessor<_ElementType>;
-  using element_type     = _ElementType;
-  using reference        = _ElementType&;
-  using data_handle_type = _ElementType*;
+  using offset_policy       = default_accessor<_ElementType>;
+  using element_type        = _ElementType;
+  using reference           = _ElementType&;
+  using data_handle_type    = _ElementType*;
+  using const_accessor_type = aligned_accessor<add_const_t<_ElementType>, _ByteAlignment>;
 
   _CCCL_HIDE_FROM_ABI aligned_accessor() noexcept = default;
 
