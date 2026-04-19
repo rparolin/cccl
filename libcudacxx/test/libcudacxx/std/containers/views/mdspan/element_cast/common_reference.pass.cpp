@@ -61,25 +61,6 @@ struct fake_atomic_ref<const T>
 // ---------------------------------------------------------------------------
 // Proposed basic_common_reference specializations (per paper proposal).
 // ---------------------------------------------------------------------------
-//
-// Two things to notice about the specializations below:
-//
-//   1. They live in `cuda::std::` because that is libcudacxx's namespace.
-//      The actual paper proposes the equivalent specializations in `std::`.
-//
-//   2. Each specialization sets the resulting `type` to the plain value
-//      type `T`. That is the minimum needed to make `common_reference_with`
-//      accept the pair — both sides are convertible to `T`, so the
-//      concept is satisfied and the motivating static_asserts at the
-//      bottom of this file compile.
-//
-//      `T` is NOT what production wording should ultimately pick. A real
-//      `common_reference_t<A, B>` should preserve cv and reference
-//      qualifiers per the C++ common-reference rules (for example,
-//      `const T&` for the read-only cases). Getting that exactly right
-//      is a wording concern the paper's R1 revision will address. For
-//      this test — which only proves the gap can be closed — the
-//      simplification is intentional.
 
 _CCCL_BEGIN_NAMESPACE_CUDA_STD
 
