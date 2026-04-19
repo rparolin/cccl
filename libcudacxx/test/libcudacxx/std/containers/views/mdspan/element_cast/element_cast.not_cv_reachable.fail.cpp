@@ -19,8 +19,7 @@ int main(int, char**)
   cuda::std::mdspan<double, E> md{storage, E{}};
 
   // Expected: ill-formed. 'int' is not cv-reachable from 'double'.
-  auto bad = cuda::std::element_cast<int>(md);
-  (void)bad;
+  [[maybe_unused]] auto bad = cuda::std::element_cast<int>(md);
 
   return 0;
 }

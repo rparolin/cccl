@@ -31,8 +31,7 @@ int main(int, char**)
   MD md{storage, E{}, opaque_accessor{}};
 
   // Expected: ill-formed. const_accessor_for<opaque_accessor> has no 'type'.
-  auto bad = cuda::std::element_cast<const double>(md);
-  (void)bad;
+  [[maybe_unused]] auto bad = cuda::std::element_cast<const double>(md);
 
   return 0;
 }
