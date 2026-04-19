@@ -27,10 +27,11 @@ This gap is motivated directly by C++26's addition of cv qualifiers to
 mdspan accessor whose `reference` type is `atomic_ref<T>` has no way today
 to participate in a read-only view.
 
-Separately, cross-const `common_reference_with` fails for proxy references
-(see godbolt tests with `atomic_ref<T>` vs `const T&`, and
-`vector<bool>::reference` vs `const bool&`). **This paper closes that gap
-for `atomic_ref`** (see the dedicated section below). Without it, an
+Separately, cross-const `common_reference_with` fails for proxy references.
+Both `common_reference_with<atomic_ref<T>, const T&>` and
+`common_reference_with<vector<bool>::reference, const bool&>` fail today,
+along with the mirrored pairs. **This paper closes that gap for
+`atomic_ref`** (see the dedicated section below). Without it, an
 mdspan-over-proxy-reference cannot be used in standard algorithms that
 check `common_reference_with` across the two reference types.
 
@@ -477,11 +478,10 @@ impact; the trait and function template are header-only additions.
 ## Cross-const `basic_common_reference` specializations for `atomic_ref`
 
 **The gap.** For proxy references like `atomic_ref<T>`, the test
-`common_reference_with<atomic_ref<T>, const T&>` (and mirror cases)
-fails today — no `basic_common_reference` specialization covers them.
-The same failure is visible for
-`common_reference_with<atomic_ref<T>, atomic_ref<const T>>` (and its
-mirror). See the godbolt referenced in the motivation.
+`common_reference_with<atomic_ref<T>, const T&>` (and its mirror) fails
+today — no `basic_common_reference` specialization covers it. The same
+failure is visible for `common_reference_with<atomic_ref<T>,
+atomic_ref<const T>>` (and its mirror).
 
 Consequence: standard algorithms that reason about the two reference
 types together — anything relying on `indirectly_readable`,

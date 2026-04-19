@@ -52,7 +52,7 @@ and view a buffer as `mdspan<double, E, L, atomic_accessor<double>>`. But there 
 
 ### The `common_reference_with` gap
 
-Independently, `common_reference_with` lacks cross-const specializations for proxy references. The following `static_assert`s — distilled from the motivating godbolt — fail today:
+Independently, `common_reference_with` lacks cross-const specializations for proxy references. The following `static_assert`s fail today:
 
 ```cpp
 static_assert(std::common_reference_with<std::atomic_ref<float>,       const float&>);
@@ -246,7 +246,6 @@ Concrete wording to follow in R1 after LEWG/SG1 design feedback.
 ## Future work
 
 - **Broader `element_cast<T>`**: permit element-type conversion (`float → double`) or `volatile`-qualification. Each raises independent design questions (alignment, compute-vs-view semantics, volatile-access semantics) and deserves its own paper. The name `element_cast` already supports the broader interpretation; this paper's narrow restriction is a deliberate first step.
-- **`vector<bool>::reference` cross-const `basic_common_reference`**: analogous to the `atomic_ref` fix, but belongs to the independent re-design of `vector<bool>` and is out of scope here.
 
 ---
 

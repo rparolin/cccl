@@ -10,10 +10,11 @@
 // <mdspan>
 //
 // Design demonstration for the cross-const basic_common_reference
-// specializations proposed in the mdspan const-accessor CP paper.
+// specializations proposed in the mdspan const-accessor customization
+// point paper.
 //
-// The original problem statement included a godbolt showing
-// common_reference_with fails for cross-const pairs of proxy references:
+// The motivating gap: common_reference_with fails for cross-const pairs
+// of proxy references — for example:
 //
 //   common_reference_with<atomic_ref<T>,       const T&>  // fails
 //   common_reference_with<atomic_ref<const T>, T&>        // fails
@@ -27,7 +28,7 @@
 // design of the specializations end to end.
 //
 // Claim proven: with the specializations below, common_reference_with
-// succeeds for all four cross-const pairs that the godbolt showed failing.
+// succeeds for all four cross-const pairs that originally failed.
 
 #include <cuda/std/concepts>
 #include <cuda/std/type_traits>
@@ -111,8 +112,8 @@ struct basic_common_reference<fake_atomic_ref<const T>, fake_atomic_ref<T>, _TQu
 _CCCL_END_NAMESPACE_CUDA_STD
 
 // ---------------------------------------------------------------------------
-// The four cross-const cases the godbolt flagged — all pass with the
-// specializations above.
+// The four cross-const cases called out in the motivation — all pass
+// with the specializations above.
 // ---------------------------------------------------------------------------
 
 static_assert(cuda::std::common_reference_with<fake_atomic_ref<float>,       const float&>);
