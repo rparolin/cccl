@@ -765,7 +765,7 @@ Part of mdspan const-accessor customization point prototype."
 
 ## Task 10: Negative tests (.fail.cpp)
 
-Two negative tests: one for a non-cv-reachable target type, one for an accessor with no valid const counterpart.
+Two negative tests: one for a target type T that is neither `element_type` nor `add_const_t<element_type>`, and one for an accessor with no valid const counterpart.
 
 **Files:**
 - Create: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.not_cv_reachable.fail.cpp`
@@ -779,7 +779,8 @@ Two negative tests: one for a non-cv-reachable target type, one for an accessor 
 //===----------------------------------------------------------------------===//
 
 // <mdspan>
-// element_cast<T>(md) with T not cv-reachable from element_type: ill-formed.
+// element_cast<T>(md) is only well-formed when T is the mdspan's
+// element_type or add_const_t<element_type>. Any other T is a compile error.
 
 #include <cuda/std/mdspan>
 
@@ -789,9 +790,8 @@ int main(int, char**)
   double storage[3]{};
   cuda::std::mdspan<double, E> md{storage, E{}};
 
-  // Expected: ill-formed. 'int' is not cv-reachable from 'double'.
-  auto bad = cuda::std::element_cast<int>(md);
-  (void)bad;
+  // Expected: ill-formed. 'int' is neither 'double' nor 'const double'.
+  [[maybe_unused]] auto bad = cuda::std::element_cast<int>(md);
 
   return 0;
 }
@@ -847,7 +847,7 @@ git add libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/elem
 git commit -m "[libcudacxx] Negative tests for element_cast
 
 Two .fail.cpp tests:
-- element_cast<int>(mdspan<double>): T not cv-reachable from element_type.
+- element_cast<int>(mdspan<double>): T is neither element_type nor add_const_t<element_type>.
 - element_cast<const double>(mdspan<_, _, _, opaque_accessor>): no valid
   const counterpart (non-template accessor without member or
   specialization).

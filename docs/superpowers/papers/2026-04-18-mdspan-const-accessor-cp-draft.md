@@ -220,7 +220,7 @@ The prototype validates that:
 - The member-first-then-substitution trait resolution composes correctly with both standard and user-defined accessors.
 - `element_cast<T>` is O(1) and preserves the mdspan's mapping and data handle by construction.
 - `submdspan(element_cast<const T>(md))` and `element_cast<const T>(submdspan(md))` yield the same mdspan type for `default_accessor` and `aligned_accessor`.
-- Ill-formed cases (accessor without a valid const counterpart; target type not cv-reachable from element type) produce clean compile errors at the call site.
+- Ill-formed cases (accessor without a valid const counterpart; target type T that is neither `element_type` nor `add_const_t<element_type>`) produce clean compile errors at the call site.
 
 The prototype's tests are organized as `.pass.cpp` / `.fail.cpp` under `libcudacxx/test/.../mdspan/element_cast/`.
 

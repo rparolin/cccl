@@ -32,11 +32,9 @@ template <class _A>
 _CCCL_CONCEPT __has_const_accessor_type =
   _CCCL_REQUIRES_EXPR((_A))(typename(typename _A::const_accessor_type));
 
-// Primary template — undefined so ill-formed cases diagnose at the call site.
 template <class _A>
 struct const_accessor_for;
 
-// Member-hook path (authoritative when present).
 template <class _A>
   requires __has_const_accessor_type<_A>
 struct const_accessor_for<_A>

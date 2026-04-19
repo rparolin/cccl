@@ -344,8 +344,7 @@ when the implicit path isn't available (custom accessors, third-party
 trait specializations).
 
 **Constraint**: the function template is removed from overload resolution
-when T is not cv-reachable from `element_type` (i.e., not equal to
-`element_type` or its const-added form), or when
+when T is neither `element_type` nor `add_const_t<element_type>`, or when
 `const_accessor_for_t<A>` is ill-formed for the const-add case.
 Ill-formed calls produce a normal no-viable-overload error.
 
@@ -457,8 +456,8 @@ both sides of the diagram above agree.
 - Constrained-out behavior:
   - accessor with no valid const counterpart produces a clean compile
     error at the call site;
-  - `element_cast<int>(mdspan<double>)` (not cv-reachable) is
-    ill-formed.
+  - `element_cast<int>(mdspan<double>)` is ill-formed — `int` is neither
+    `double` nor `const double`.
 - Identity case: `element_cast<T>(md)` where `T == element_type`
   returns the same mdspan type.
 
