@@ -60,8 +60,8 @@ __host__ __device__ void test()
   static_assert(cuda::std::is_same_v<typename RO::accessor_type,
                                      vendor::gpu_accessor<const double>>);
   assert(ro.data_handle() == md.data_handle());
-  assert(ro[0] == 7);
-  assert(ro[1] == 8);
+  assert(ro[0] == storage[0]);
+  assert(ro[1] == storage[1]);
 }
 
 int main(int, char**)

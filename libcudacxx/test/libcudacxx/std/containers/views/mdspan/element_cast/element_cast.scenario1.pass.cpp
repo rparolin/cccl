@@ -43,9 +43,9 @@ __host__ __device__ void test_same_data()
   auto ro = cuda::std::element_cast<const double>(md);
 
   assert(ro.data_handle() == md.data_handle());
-  assert(ro[0] == 1.0);
-  assert(ro[1] == 2.0);
-  assert(ro[2] == 3.0);
+  assert(ro[0] == storage[0]);
+  assert(ro[1] == storage[1]);
+  assert(ro[2] == storage[2]);
 }
 
 int main(int, char**)

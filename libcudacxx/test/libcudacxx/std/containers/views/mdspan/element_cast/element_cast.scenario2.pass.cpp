@@ -53,8 +53,8 @@ __host__ __device__ void test()
   static_assert(cuda::std::is_same_v<typename RO::element_type, const double>);
 
   assert(ro.data_handle() == md.data_handle());
-  assert(ro[0] == 10);
-  assert(ro[3] == 40);
+  assert(ro[0] == storage[0]);
+  assert(ro[3] == storage[3]);
 }
 
 int main(int, char**)
