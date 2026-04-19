@@ -2,212 +2,103 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Prototype the "const version of mdspan accessor" customization point in libcudacxx, as specified in `docs/superpowers/specs/2026-04-18-mdspan-const-accessor-cp-design.md`.
+**Goal:** Prototype the "const version of mdspan accessor" customization point in libcudacxx, per `docs/superpowers/specs/2026-04-18-mdspan-const-accessor-cp-design.md`.
 
-**Architecture:** Introduce a trait `cuda::std::const_accessor_for<A>` with member-then-substitution resolution (Approach C, "hybrid"). Add `const_accessor_type` member aliases to `default_accessor` and `aligned_accessor`. Add a `cuda::std::as_const(mdspan)` overload in `<cuda/std/mdspan>`. Validate with compile-time tests for all three design scenarios, submdspan composition, and the ill-formed case.
+**Architecture:** Trait `cuda::std::const_accessor_for<A>` with member-then-substitution resolution (Approach C, "hybrid"). `const_accessor_type` member aliases on `default_accessor` and `aligned_accessor`. Freestanding `cuda::std::element_cast<T>` function template in `<cuda/std/mdspan>`, restricted to cv-qualification changes (identity and add-const). Compile-time tests for all three design scenarios, submdspan composition, and negative cases.
 
 **Tech Stack:** C++17+ via libcudacxx macros (`_CCCL_API`, `_CCCL_TEMPLATE`, `_CCCL_REQUIRES`, `_CCCL_CONCEPT`, `_CCCL_BEGIN_NAMESPACE_CUDA_STD`). Tests via libcudacxx's lit-based `.pass.cpp` / `.fail.cpp` suite; built through CMake.
 
 ---
 
+## Prior state note
+
+**Commit `07af161748`** (on this branch) already created the trait skeleton (substitution fallback only) and its first test under a now-misnamed directory `as_const/`. This plan:
+
+1. Renames the test directory from `as_const/` to `element_cast/` (Task 1 below).
+2. Keeps the trait header content from that commit — still valid.
+3. Extends the trait with member-hook priority (Task 2), opts in the standard accessors (Tasks 3–4), adds the `element_cast<T>` function template (Task 5), and adds remaining tests (Tasks 6–9).
+
+---
+
 ## File Structure
 
-**New files**:
-- `libcudacxx/include/cuda/std/__mdspan/const_accessor_for.h` — primary template, specializations, helper alias.
-- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/trait.default.pass.cpp`
-- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/trait.member.pass.cpp`
-- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/trait.specialization.pass.cpp`
-- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/as_const.scenario1.pass.cpp`
-- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/as_const.scenario2.pass.cpp`
-- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/as_const.composition.pass.cpp`
-- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/as_const.no_const.fail.cpp`
+**New files:**
+- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/trait.default.pass.cpp` (renamed/moved from `as_const/`).
+- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/trait.member.pass.cpp`
+- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/trait.specialization.pass.cpp`
+- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.scenario1.pass.cpp`
+- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.scenario2.pass.cpp`
+- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.composition.pass.cpp`
+- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.identity.pass.cpp`
+- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.not_cv_reachable.fail.cpp`
+- `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.no_const.fail.cpp`
 
-**Modified files**:
-- `libcudacxx/include/cuda/std/__mdspan/default_accessor.h` — add `const_accessor_type` alias.
-- `libcudacxx/include/cuda/std/__mdspan/aligned_accessor.h` — add `const_accessor_type` alias.
-- `libcudacxx/include/cuda/std/__mdspan/mdspan.h` — add `cuda::std::as_const(mdspan)` overload.
-- `libcudacxx/include/cuda/std/mdspan` (umbrella) — include the new trait header.
+**Modified files:**
+- `libcudacxx/include/cuda/std/__mdspan/const_accessor_for.h` — add member-hook path (Task 2).
+- `libcudacxx/include/cuda/std/__mdspan/default_accessor.h` — add `const_accessor_type` (Task 3).
+- `libcudacxx/include/cuda/std/__mdspan/aligned_accessor.h` — add `const_accessor_type` (Task 4).
+- `libcudacxx/include/cuda/std/__mdspan/mdspan.h` — add `cuda::std::element_cast<T>` function template (Task 5).
 
 Commit at the end of every task.
 
 ---
 
-## Task 1: Create trait skeleton with substitution-fallback only
+## Task 1: Rename test directory and verify existing trait
+
+The prior commit `07af161748` placed `trait.default.pass.cpp` under a directory named `as_const/`. The spec now uses `element_cast<T>`; this task renames the directory to match.
 
 **Files:**
-- Create: `libcudacxx/include/cuda/std/__mdspan/const_accessor_for.h`
-- Modify: `libcudacxx/include/cuda/std/mdspan` (include the new header)
-- Create test: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/trait.default.pass.cpp`
+- Move: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/trait.default.pass.cpp`
+  → `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/trait.default.pass.cpp`
 
-- [ ] **Step 1: Write the failing test first**
-
-Create `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/trait.default.pass.cpp`:
-
-```cpp
-//===----------------------------------------------------------------------===//
-//
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
-//
-//===----------------------------------------------------------------------===//
-
-// <mdspan>
-
-// Trait substitution-fallback: const_accessor_for_t<Foo<T>> == Foo<const T>
-
-#include <cuda/std/mdspan>
-#include <cuda/std/type_traits>
-#include "test_macros.h"
-
-template <class T>
-struct template_accessor {
-  using offset_policy    = template_accessor;
-  using element_type     = T;
-  using reference        = T&;
-  using data_handle_type = T*;
-};
-
-__host__ __device__ void test_default_accessor()
-{
-  using A = cuda::std::default_accessor<int>;
-  using C = cuda::std::const_accessor_for_t<A>;
-  static_assert(cuda::std::is_same_v<C, cuda::std::default_accessor<const int>>);
-}
-
-__host__ __device__ void test_user_template_accessor()
-{
-  using A = template_accessor<double>;
-  using C = cuda::std::const_accessor_for_t<A>;
-  static_assert(cuda::std::is_same_v<C, template_accessor<const double>>);
-}
-
-int main(int, char**)
-{
-  test_default_accessor();
-  test_user_template_accessor();
-  return 0;
-}
-```
-
-- [ ] **Step 2: Run test to confirm it fails**
-
-Build and run the single test (command pattern — adjust to repo's standard test driver):
+- [ ] **Step 1: Rename the directory with `git mv`**
 
 ```bash
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.as_const.trait.default
+git mv libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const \
+       libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast
 ```
 
-Expected: FAIL with "no type named `const_accessor_for_t` in namespace `cuda::std`" (header doesn't exist yet).
-
-- [ ] **Step 3: Create the trait header with substitution default only**
-
-Create `libcudacxx/include/cuda/std/__mdspan/const_accessor_for.h`:
-
-```cpp
-// -*- C++ -*-
-//===----------------------------------------------------------------------===//
-//
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
-//
-//===----------------------------------------------------------------------===//
-
-#ifndef _CUDA_STD___MDSPAN_CONST_ACCESSOR_FOR_H
-#define _CUDA_STD___MDSPAN_CONST_ACCESSOR_FOR_H
-
-#include <cuda/std/detail/__config>
-
-#if defined(_CCCL_IMPLICIT_SYSTEM_HEADER_GCC)
-#  pragma GCC system_header
-#elif defined(_CCCL_IMPLICIT_SYSTEM_HEADER_CLANG)
-#  pragma clang system_header
-#elif defined(_CCCL_IMPLICIT_SYSTEM_HEADER_MSVC)
-#  pragma system_header
-#endif // no system header
-
-#include <cuda/std/__type_traits/add_const.h>
-
-#include <cuda/std/__cccl/prologue.h>
-
-_CCCL_BEGIN_NAMESPACE_CUDA_STD
-
-// Primary template — intentionally undefined so that ill-formed cases produce
-// a clean "no type named 'type'" diagnostic at the call site.
-template <class _A>
-struct const_accessor_for;
-
-// Substitution-fallback partial specialization for template accessors of the
-// form Tmpl<T, Rest...>. This specialization is subsumed by an
-// opt-in partial specialization (added in the next task) when the accessor
-// provides a nested `const_accessor_type`.
-template <template <class, class...> class _Tmpl, class _T, class... _Rest>
-struct const_accessor_for<_Tmpl<_T, _Rest...>>
-{
-  using type = _Tmpl<add_const_t<_T>, _Rest...>;
-};
-
-template <class _A>
-using const_accessor_for_t = typename const_accessor_for<_A>::type;
-
-_CCCL_END_NAMESPACE_CUDA_STD
-
-#include <cuda/std/__cccl/epilogue.h>
-
-#endif // _CUDA_STD___MDSPAN_CONST_ACCESSOR_FOR_H
-```
-
-- [ ] **Step 4: Wire the header into the umbrella**
-
-Modify `libcudacxx/include/cuda/std/mdspan` to add (alphabetical placement among the `__mdspan/*` includes):
-
-```cpp
-#include <cuda/std/__mdspan/const_accessor_for.h>
-```
-
-- [ ] **Step 5: Run the test to confirm it passes**
+- [ ] **Step 2: Verify the test still compiles**
 
 ```bash
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.as_const.trait.default
+clang++ -std=c++20 -D__host__= -D__device__= \
+  -I libcudacxx/include -I libcudacxx/test/support \
+  -c libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/trait.default.pass.cpp \
+  -o /tmp/trait.default.o
 ```
 
-Expected: PASS (static_asserts compile).
+Expected: exit 0, no diagnostics.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add libcudacxx/include/cuda/std/__mdspan/const_accessor_for.h \
-        libcudacxx/include/cuda/std/mdspan \
-        libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/trait.default.pass.cpp
-git commit -m "[libcudacxx] Add const_accessor_for trait skeleton
+git commit -m "[libcudacxx] Rename mdspan as_const test dir to element_cast
 
-Introduces cuda::std::const_accessor_for<A> with a template-substitution
-fallback for accessors of the form Tmpl<T, Rest...>. Member-hook and user
-specialization paths added in subsequent commits.
+Aligns test directory with the spec's element_cast<T> naming; no
+content changes.
 
 Part of mdspan const-accessor customization point prototype."
 ```
 
 ---
 
-## Task 2: Add member-hook priority to trait
+## Task 2: Add member-hook priority to the trait
 
-The trait must prefer `A::const_accessor_type` over substitution. This requires (1) a concept that detects the nested alias and (2) a partial specialization that wins over the substitution default when the member exists.
+The trait must prefer `A::const_accessor_type` over substitution. Concept-based detection + a constrained partial specialization on the member-hook path.
 
 **Files:**
 - Modify: `libcudacxx/include/cuda/std/__mdspan/const_accessor_for.h`
-- Create test: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/trait.member.pass.cpp`
+- Create test: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/trait.member.pass.cpp`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `trait.member.pass.cpp`:
-
 ```cpp
+//===----------------------------------------------------------------------===//
+// (LLVM Apache 2.0 license + NVIDIA 2026 copyright header — mirror
+// trait.default.pass.cpp)
+//===----------------------------------------------------------------------===//
+
 // <mdspan>
-//
 // const_accessor_for prefers A::const_accessor_type when present.
 
 #include <cuda/std/mdspan>
@@ -223,8 +114,7 @@ struct accessor_with_member {
   using const_accessor_type = accessor_with_member<const T>;
 };
 
-// Distinguishable from template substitution: different spelling of the
-// const type that substitution would *not* produce.
+// Distinguishable from template substitution: a type substitution would NOT produce.
 template <class T>
 struct accessor_member_divergent {
   using offset_policy    = accessor_member_divergent;
@@ -243,15 +133,15 @@ struct accessor_member_divergent {
 __host__ __device__ void test_member_matches_substitution()
 {
   using A = accessor_with_member<int>;
-  using C = cuda::std::const_accessor_for_t<A>;
-  static_assert(cuda::std::is_same_v<C, accessor_with_member<const int>>);
+  static_assert(cuda::std::is_same_v<cuda::std::const_accessor_for_t<A>,
+                                     accessor_with_member<const int>>);
 }
 
 __host__ __device__ void test_member_wins_over_substitution()
 {
   using A = accessor_member_divergent<int>;
-  using C = cuda::std::const_accessor_for_t<A>;
-  static_assert(cuda::std::is_same_v<C, typename A::const_variant>);
+  static_assert(cuda::std::is_same_v<cuda::std::const_accessor_for_t<A>,
+                                     typename A::const_variant>);
 }
 
 int main(int, char**)
@@ -262,31 +152,35 @@ int main(int, char**)
 }
 ```
 
-- [ ] **Step 2: Run the test to confirm it fails**
+- [ ] **Step 2: Confirm it fails**
+
+Standalone compile (expected: substitution produces `accessor_member_divergent<const int>`, not `A::const_variant` — second `static_assert` fails):
 
 ```bash
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.as_const.trait.member
+clang++ -std=c++20 -D__host__= -D__device__= \
+  -I libcudacxx/include -I libcudacxx/test/support \
+  -c libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/trait.member.pass.cpp \
+  -o /tmp/trait.member.o
 ```
 
-Expected: FAIL on `test_member_wins_over_substitution` — substitution produces `accessor_member_divergent<const int>`, not `A::const_variant`.
+Expected: FAIL with a `static_assert` failure on `test_member_wins_over_substitution`.
 
-- [ ] **Step 3: Add member-hook concept and partial specialization**
+- [ ] **Step 3: Add member-hook detection to the trait**
 
-Edit `libcudacxx/include/cuda/std/__mdspan/const_accessor_for.h`. After the existing includes, add:
+Edit `libcudacxx/include/cuda/std/__mdspan/const_accessor_for.h`. Add include:
 
 ```cpp
 #include <cuda/std/__concepts/concept_macros.h>
 ```
 
-And replace the body (between `_CCCL_BEGIN_NAMESPACE_CUDA_STD` and `_CCCL_END_NAMESPACE_CUDA_STD`) with:
+Replace the body inside `_CCCL_BEGIN_NAMESPACE_CUDA_STD` ... `_CCCL_END_NAMESPACE_CUDA_STD` with:
 
 ```cpp
 template <class _A>
 _CCCL_CONCEPT __has_const_accessor_type =
   _CCCL_REQUIRES_EXPR((_A))(typename _A::const_accessor_type);
 
-// Primary template — undefined, so ill-formed cases produce a clean
-// "no type named 'type'" diagnostic at the call site.
+// Primary template — undefined so ill-formed cases diagnose at the call site.
 template <class _A>
 struct const_accessor_for;
 
@@ -298,9 +192,7 @@ struct const_accessor_for<_A>
   using type = typename _A::const_accessor_type;
 };
 
-// Substitution fallback for template accessors Tmpl<T, Rest...> that do NOT
-// expose a nested const_accessor_type. Constrained so as not to conflict
-// with the member-hook specialization above.
+// Substitution fallback for template accessors without the nested alias.
 template <template <class, class...> class _Tmpl, class _T, class... _Rest>
   requires (!__has_const_accessor_type<_Tmpl<_T, _Rest...>>)
 struct const_accessor_for<_Tmpl<_T, _Rest...>>
@@ -312,44 +204,34 @@ template <class _A>
 using const_accessor_for_t = typename const_accessor_for<_A>::type;
 ```
 
-*Note:* libcudacxx supports pre-C++20 configurations. If `requires`-clauses on partial specializations aren't available on all supported compilers, the engineer should express the constraint via `enable_if_t` on a trailing default template parameter instead:
+*Pre-C++20 fallback:* if `requires` on partial specializations isn't available on all CI compilers, express the member constraint via `enable_if_t` on a trailing default template parameter. Try the concepts form first.
 
-```cpp
-template <class _A, class _Enable = void>
-struct const_accessor_for;
-
-template <class _A>
-struct const_accessor_for<_A, enable_if_t<__has_const_accessor_type<_A>>>
-{ using type = typename _A::const_accessor_type; };
-
-// ... and analogous for the substitution path, but this is more intricate
-// because partial specialization of the primary takes a single template
-// parameter. The cleanest pre-C++20 form is to use a single detection trait
-// driven by priority tags. Leave the concepts form above as the primary path
-// and only fall back to enable_if if the CI reports the requires-clause is
-// unsupported.
-```
-
-- [ ] **Step 4: Run both trait tests to confirm they pass**
+- [ ] **Step 4: Confirm both trait tests pass**
 
 ```bash
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.as_const.trait.default
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.as_const.trait.member
+clang++ -std=c++20 -D__host__= -D__device__= \
+  -I libcudacxx/include -I libcudacxx/test/support \
+  -c libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/trait.default.pass.cpp \
+  -o /tmp/trait.default.o
+clang++ -std=c++20 -D__host__= -D__device__= \
+  -I libcudacxx/include -I libcudacxx/test/support \
+  -c libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/trait.member.pass.cpp \
+  -o /tmp/trait.member.o
 ```
 
-Expected: both PASS.
+Expected: both exit 0.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add libcudacxx/include/cuda/std/__mdspan/const_accessor_for.h \
-        libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/trait.member.pass.cpp
+        libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/trait.member.pass.cpp
 git commit -m "[libcudacxx] Add member-hook priority to const_accessor_for
 
-Trait now prefers A::const_accessor_type over template substitution. The
-__has_const_accessor_type concept drives both the member-hook partial
-specialization and the constraint that keeps the substitution fallback
-from conflicting with it.
+Trait now prefers A::const_accessor_type over template substitution. A
+concept __has_const_accessor_type drives the member-hook specialization
+and the constraint that keeps the substitution fallback from conflicting
+with it.
 
 Part of mdspan const-accessor customization point prototype."
 ```
@@ -362,24 +244,20 @@ Part of mdspan const-accessor customization point prototype."
 - Modify: `libcudacxx/include/cuda/std/__mdspan/default_accessor.h`
 - Modify: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/default_accessor/types.pass.cpp`
 
-- [ ] **Step 1: Extend the existing types test to assert the new member**
+- [ ] **Step 1: Extend the existing types test**
 
-Edit `default_accessor/types.pass.cpp`. After the existing static_asserts inside `template <class T> void test()`, add:
+In `types.pass.cpp`, after the existing static_asserts inside `template <class T> void test()`, add:
 
 ```cpp
   static_assert(cuda::std::is_same_v<typename A::const_accessor_type,
                                      cuda::std::default_accessor<cuda::std::add_const_t<T>>>);
 ```
 
-- [ ] **Step 2: Run the test to confirm it fails**
-
-```bash
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.default_accessor.types
-```
+- [ ] **Step 2: Confirm it fails**
 
 Expected: FAIL with "no type named `const_accessor_type` in `cuda::std::default_accessor<…>`".
 
-- [ ] **Step 3: Add the alias to `default_accessor`**
+- [ ] **Step 3: Add the alias**
 
 Edit `libcudacxx/include/cuda/std/__mdspan/default_accessor.h`. After the existing four `using` lines inside the struct, insert:
 
@@ -387,21 +265,9 @@ Edit `libcudacxx/include/cuda/std/__mdspan/default_accessor.h`. After the existi
   using const_accessor_type = default_accessor<add_const_t<_ElementType>>;
 ```
 
-You may also need an additional include:
+Ensure `<cuda/std/__type_traits/add_const.h>` is included (add if not already transitively available).
 
-```cpp
-#include <cuda/std/__type_traits/add_const.h>
-```
-
-(check whether it is already transitively included; add if not).
-
-- [ ] **Step 4: Run the test to confirm it passes**
-
-```bash
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.default_accessor.types
-```
-
-Expected: PASS.
+- [ ] **Step 4: Confirm it passes**
 
 - [ ] **Step 5: Commit**
 
@@ -410,9 +276,8 @@ git add libcudacxx/include/cuda/std/__mdspan/default_accessor.h \
         libcudacxx/test/libcudacxx/std/containers/views/mdspan/default_accessor/types.pass.cpp
 git commit -m "[libcudacxx] Add const_accessor_type alias to default_accessor
 
-default_accessor<T> exposes default_accessor<const T> as its
-const counterpart, wiring it into the const_accessor_for customization
-point explicitly (rather than relying on the substitution fallback).
+Explicit opt-in to const_accessor_for, so default_accessor doesn't rely on
+the trait's substitution fallback.
 
 Part of mdspan const-accessor customization point prototype."
 ```
@@ -427,7 +292,7 @@ Part of mdspan const-accessor customization point prototype."
 
 - [ ] **Step 1: Extend the aligned_accessor types test**
 
-In `aligned_accessor.pass.cpp`, locate the block that exercises type aliases and add:
+Locate the block that exercises type aliases and add:
 
 ```cpp
   static_assert(cuda::std::is_same_v<
@@ -435,15 +300,9 @@ In `aligned_accessor.pass.cpp`, locate the block that exercises type aliases and
       cuda::std::aligned_accessor<cuda::std::add_const_t<T>, Align>>);
 ```
 
-(Use the template parameter names the existing test uses — `T` and the alignment constant — don't hard-code `Align` if the test uses a different identifier.)
+(Use the test's existing parameter names — `T` and the alignment constant — don't hard-code `Align` if different.)
 
 - [ ] **Step 2: Confirm it fails**
-
-```bash
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.mdspan.aligned_accessor.aligned_accessor
-```
-
-Expected: FAIL with "no type named `const_accessor_type`".
 
 - [ ] **Step 3: Add the alias**
 
@@ -453,15 +312,9 @@ Edit `libcudacxx/include/cuda/std/__mdspan/aligned_accessor.h`. In the class bod
   using const_accessor_type = aligned_accessor<add_const_t<_ElementType>, _ByteAlignment>;
 ```
 
-(Use the actual spelling of the alignment template parameter — verify by reading the file before editing.)
+(Verify the spelling of the alignment template parameter in the current file before editing.)
 
 - [ ] **Step 4: Confirm it passes**
-
-```bash
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.mdspan.aligned_accessor.aligned_accessor
-```
-
-Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -470,30 +323,30 @@ git add libcudacxx/include/cuda/std/__mdspan/aligned_accessor.h \
         libcudacxx/test/libcudacxx/std/containers/views/mdspan/mdspan.aligned_accessor/aligned_accessor.pass.cpp
 git commit -m "[libcudacxx] Add const_accessor_type alias to aligned_accessor
 
-Mirrors the default_accessor change: aligned_accessor<T, N> exposes
-aligned_accessor<const T, N> as its const counterpart, wiring it into
-const_accessor_for explicitly.
+Mirrors the default_accessor change.
 
 Part of mdspan const-accessor customization point prototype."
 ```
 
 ---
 
-## Task 5: Add `cuda::std::as_const(mdspan)` overload + Scenario 1 test
+## Task 5: Add `cuda::std::element_cast<T>` function template + Scenario 1 test
 
 **Files:**
 - Modify: `libcudacxx/include/cuda/std/__mdspan/mdspan.h`
-- Create test: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/as_const.scenario1.pass.cpp`
+- Create test: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.scenario1.pass.cpp`
 
 - [ ] **Step 1: Write the failing Scenario 1 test**
 
-Create `as_const.scenario1.pass.cpp`:
-
 ```cpp
+//===----------------------------------------------------------------------===//
+// (LLVM Apache 2.0 + NVIDIA 2026 copyright — mirror the other tests)
+//===----------------------------------------------------------------------===//
+
 // <mdspan>
-//
-// Scenario 1: default_accessor. cuda::std::as_const(md) produces an
-// mdspan<const T> over the same data with default_accessor<const T>.
+// Scenario 1: default_accessor.
+// cuda::std::element_cast<const double>(md) produces an mdspan<const double>
+// over the same data with default_accessor<const double>.
 
 #include <cuda/std/cassert>
 #include <cuda/std/mdspan>
@@ -509,7 +362,7 @@ __host__ __device__ void test_type()
   double storage[12]{};
   MD md{storage, E{}};
 
-  auto ro = cuda::std::as_const(md);
+  auto ro = cuda::std::element_cast<const double>(md);
 
   using RO = decltype(ro);
   static_assert(cuda::std::is_same_v<typename RO::element_type, const double>);
@@ -523,10 +376,9 @@ __host__ __device__ void test_same_data()
   using E = cuda::std::extents<int, 3>;
   double storage[3] = {1.0, 2.0, 3.0};
   cuda::std::mdspan<double, E> md{storage, E{}};
-  auto ro = cuda::std::as_const(md);
+  auto ro = cuda::std::element_cast<const double>(md);
 
   assert(ro.data_handle() == md.data_handle());
-  // Element identity: values visible through ro match storage.
   assert(ro[0] == 1.0);
   assert(ro[1] == 2.0);
   assert(ro[2] == 3.0);
@@ -542,81 +394,147 @@ int main(int, char**)
 
 - [ ] **Step 2: Confirm it fails**
 
-```bash
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.as_const.as_const.scenario1
-```
+Expected: FAIL with "no member named `element_cast` in `cuda::std`" (function template not defined yet).
 
-Expected: FAIL on `auto ro = cuda::std::as_const(md)` — existing `std::as_const(T&)` would return `const mdspan<...>&`, which is `mdspan<double,…>` (not `mdspan<const double,…>`), so the subsequent static_asserts would fail.
+- [ ] **Step 3: Add the `element_cast` function template**
 
-- [ ] **Step 3: Add the overload to `mdspan.h`**
-
-Edit `libcudacxx/include/cuda/std/__mdspan/mdspan.h`. After the `mdspan` class template definition (and any existing deduction guides), add within the `_CCCL_BEGIN_NAMESPACE_CUDA_STD` ... `_CCCL_END_NAMESPACE_CUDA_STD` block:
-
-```cpp
-// Constrained on const_accessor_for_t<_AccessorPolicy> being valid.
-template <class _ElementType, class _Extents, class _LayoutPolicy, class _AccessorPolicy>
-_CCCL_API constexpr auto
-as_const(const mdspan<_ElementType, _Extents, _LayoutPolicy, _AccessorPolicy>& __md) noexcept
-  -> mdspan<add_const_t<_ElementType>,
-            _Extents,
-            _LayoutPolicy,
-            const_accessor_for_t<_AccessorPolicy>>
-{
-  using _ConstA = const_accessor_for_t<_AccessorPolicy>;
-  using _Result = mdspan<add_const_t<_ElementType>, _Extents, _LayoutPolicy, _ConstA>;
-  return _Result{
-    typename _ConstA::data_handle_type{__md.data_handle()},
-    __md.mapping(),
-    _ConstA{__md.accessor()}};
-}
-```
-
-Add the include for the trait near the top of `mdspan.h`:
+Edit `libcudacxx/include/cuda/std/__mdspan/mdspan.h`. Near the top of the file, ensure these includes are present:
 
 ```cpp
 #include <cuda/std/__mdspan/const_accessor_for.h>
 #include <cuda/std/__type_traits/add_const.h>
 ```
 
-Verify these aren't already included before adding.
+After the `mdspan` class template definition (and any existing deduction guides), within the `_CCCL_BEGIN_NAMESPACE_CUDA_STD` ... `_CCCL_END_NAMESPACE_CUDA_STD` block, add:
 
-- [ ] **Step 4: Confirm it passes**
+```cpp
+// const-add overload
+template <class _T, class _E, class _L, class _A>
+_CCCL_REQUIRES(is_same_v<_T, add_const_t<typename _A::element_type>>)
+[[nodiscard]] _CCCL_API constexpr auto
+element_cast(const mdspan<typename _A::element_type, _E, _L, _A>& __md) noexcept
+  -> mdspan<_T, _E, _L, const_accessor_for_t<_A>>
+{
+  using _C      = const_accessor_for_t<_A>;
+  using _Result = mdspan<_T, _E, _L, _C>;
+  return _Result{
+    typename _C::data_handle_type{__md.data_handle()},
+    __md.mapping(),
+    _C{__md.accessor()}};
+}
 
-```bash
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.as_const.as_const.scenario1
+// identity overload
+template <class _T, class _E, class _L, class _A>
+_CCCL_REQUIRES(is_same_v<_T, typename _A::element_type>)
+[[nodiscard]] _CCCL_API constexpr auto
+element_cast(const mdspan<typename _A::element_type, _E, _L, _A>& __md) noexcept
+  -> mdspan<_T, _E, _L, _A>
+{
+  return __md;
+}
 ```
 
-Expected: PASS.
+If `_CCCL_REQUIRES` on function templates isn't the right macro spelling for this form, use `_CCCL_TEMPLATE(...) _CCCL_REQUIRES(...)` as in other libcudacxx headers. Verify by looking at a sibling use.
+
+- [ ] **Step 4: Confirm it passes**
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add libcudacxx/include/cuda/std/__mdspan/mdspan.h \
-        libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/as_const.scenario1.pass.cpp
-git commit -m "[libcudacxx] Add cuda::std::as_const(mdspan) overload
+        libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.scenario1.pass.cpp
+git commit -m "[libcudacxx] Add cuda::std::element_cast<T> function template
 
-Freestanding overload that produces mdspan<const T, E, L, const_accessor_for_t<A>>
-over the same data. Constrained out when the accessor has no valid const
-counterpart. Mdspan stays independent of <ranges>; the overload lives
-alongside the mdspan class template in <cuda/std/mdspan>.
+Freestanding element_cast<T> producing mdspan<T, E, L, const_accessor_for_t<A>>
+for the add-const case (and identity for T == element_type). Constrained
+to cv-qualification changes of element_type. Keeps mdspan independent of
+<ranges>.
 
 Part of mdspan const-accessor customization point prototype."
 ```
 
 ---
 
-## Task 6: Scenario 2 test — custom accessor with member opt-in
-
-No implementation change — this exercises the paths already implemented. It verifies that a user-defined accessor (not `default_accessor`) with a proxy reference and an explicit `const_accessor_type` works end to end.
+## Task 6: Identity-cast test
 
 **Files:**
-- Create test: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/as_const.scenario2.pass.cpp`
+- Create: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.identity.pass.cpp`
 
 - [ ] **Step 1: Write the test**
 
 ```cpp
+//===----------------------------------------------------------------------===//
+// (standard header)
+//===----------------------------------------------------------------------===//
+
 // <mdspan>
-//
+// element_cast<T>(md) with T == element_type returns the same mdspan type.
+
+#include <cuda/std/cassert>
+#include <cuda/std/mdspan>
+#include <cuda/std/type_traits>
+#include "test_macros.h"
+
+__host__ __device__ void test_identity_default_accessor()
+{
+  using E = cuda::std::extents<int, 5>;
+  using MD = cuda::std::mdspan<double, E>;
+  double storage[5]{};
+  MD md{storage, E{}};
+
+  auto same = cuda::std::element_cast<double>(md);
+  static_assert(cuda::std::is_same_v<decltype(same), MD>);
+  assert(same.data_handle() == md.data_handle());
+}
+
+__host__ __device__ void test_identity_const_element()
+{
+  using E = cuda::std::extents<int, 5>;
+  using MD = cuda::std::mdspan<const double, E>;
+  const double storage[5] = {1, 2, 3, 4, 5};
+  MD md{storage, E{}};
+
+  auto same = cuda::std::element_cast<const double>(md);
+  static_assert(cuda::std::is_same_v<decltype(same), MD>);
+}
+
+int main(int, char**)
+{
+  test_identity_default_accessor();
+  test_identity_const_element();
+  return 0;
+}
+```
+
+- [ ] **Step 2: Confirm it passes**
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.identity.pass.cpp
+git commit -m "[libcudacxx] Test element_cast<T> identity case
+
+Verifies element_cast<T>(md) with T == element_type yields the same
+mdspan type.
+
+Part of mdspan const-accessor customization point prototype."
+```
+
+---
+
+## Task 7: Scenario 2 test — custom accessor with member opt-in
+
+**Files:**
+- Create: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.scenario2.pass.cpp`
+
+- [ ] **Step 1: Write the test**
+
+```cpp
+//===----------------------------------------------------------------------===//
+// (standard header)
+//===----------------------------------------------------------------------===//
+
+// <mdspan>
 // Scenario 2: custom accessor with explicit const_accessor_type member.
 
 #include <cuda/std/cassert>
@@ -624,9 +542,6 @@ No implementation change — this exercises the paths already implemented. It ve
 #include <cuda/std/type_traits>
 #include "test_macros.h"
 
-// Minimal proxy-reference-style accessor. Does NOT match the default
-// template substitution trivially — we test that the explicit member is
-// used.
 template <class T>
 struct minimal_proxy_accessor {
   using offset_policy       = minimal_proxy_accessor;
@@ -657,7 +572,7 @@ __host__ __device__ void test()
   double storage[4] = {10, 20, 30, 40};
   MD md{storage, E{}, minimal_proxy_accessor<double>{}};
 
-  auto ro = cuda::std::as_const(md);
+  auto ro = cuda::std::element_cast<const double>(md);
   using RO = decltype(ro);
 
   static_assert(cuda::std::is_same_v<typename RO::accessor_type,
@@ -676,42 +591,36 @@ int main(int, char**)
 }
 ```
 
-- [ ] **Step 2: Run the test**
-
-```bash
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.as_const.as_const.scenario2
-```
-
-Expected: PASS (all required paths are already implemented).
+- [ ] **Step 2: Confirm it passes** (all required paths are already implemented).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/as_const.scenario2.pass.cpp
+git add libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.scenario2.pass.cpp
 git commit -m "[libcudacxx] Test Scenario 2: custom accessor with member opt-in
 
-Verifies that a user-defined accessor exposing const_accessor_type is
-correctly picked up by cuda::std::as_const(mdspan) via the member-hook
-path of const_accessor_for.
+Verifies element_cast<const T> routes through const_accessor_for's
+member-hook path when the accessor exposes const_accessor_type.
 
 Part of mdspan const-accessor customization point prototype."
 ```
 
 ---
 
-## Task 7: Scenario 3 test — user trait specialization
-
-No implementation change; validates the specialization escape hatch for accessors the user can't modify.
+## Task 8: Scenario 3 test — user trait specialization
 
 **Files:**
-- Create test: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/trait.specialization.pass.cpp`
+- Create: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/trait.specialization.pass.cpp`
 
 - [ ] **Step 1: Write the test**
 
 ```cpp
+//===----------------------------------------------------------------------===//
+// (standard header)
+//===----------------------------------------------------------------------===//
+
 // <mdspan>
-//
-// Scenario 3: third-party accessor; user specializes const_accessor_for.
+// Scenario 3: third-party accessor, user-provided const_accessor_for specialization.
 
 #include <cuda/std/cassert>
 #include <cuda/std/mdspan>
@@ -740,7 +649,7 @@ struct gpu_accessor {
 };
 } // namespace vendor
 
-// User specialization outside of the vendor's control.
+// User specialization in cuda::std.
 _CCCL_BEGIN_NAMESPACE_CUDA_STD
 template <class T>
 struct const_accessor_for<vendor::gpu_accessor<T>>
@@ -758,9 +667,8 @@ __host__ __device__ void test()
   double storage[2] = {7, 8};
   MD md{storage, E{}, A{}};
 
-  auto ro = cuda::std::as_const(md);
+  auto ro = cuda::std::element_cast<const double>(md);
   using RO = decltype(ro);
-
   static_assert(cuda::std::is_same_v<typename RO::accessor_type,
                                      vendor::gpu_accessor<const double>>);
   assert(ro.data_handle() == md.data_handle());
@@ -775,25 +683,18 @@ int main(int, char**)
 }
 ```
 
-- [ ] **Step 2: Run the test**
+*Note:* if CI reports ambiguity between the user specialization and the substitution fallback, the fallback's `requires` clause may need to also exclude user-specialized types. The user specialization should be more specialized per C++ partial-ordering and win by default.
 
-```bash
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.as_const.trait.specialization
-```
-
-Expected: PASS (user specialization wins over substitution fallback because the primary template is more specialized).
-
-*Note:* if the specialization does not preempt the substitution fallback for template accessors, the constraint on the substitution partial specialization needs to also exclude user-specialized types. Practically, a user specialization of `const_accessor_for<vendor::gpu_accessor<T>>` is a *more specialized* partial specialization of the primary, so C++ partial-ordering picks it. If CI reports an ambiguity, revisit the constraints — add `&& !__user_specialized<...>` to the substitution partial specialization.
+- [ ] **Step 2: Confirm it passes**
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/trait.specialization.pass.cpp
+git add libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/trait.specialization.pass.cpp
 git commit -m "[libcudacxx] Test Scenario 3: user trait specialization
 
-Validates the escape hatch for accessors the user cannot modify:
-specializing cuda::std::const_accessor_for<vendor_accessor<T>> overrides
-the substitution fallback and routes cuda::std::as_const through the
+Verifies that specializing cuda::std::const_accessor_for for an
+accessor the user cannot modify routes element_cast<const T> through the
 user's mapping.
 
 Part of mdspan const-accessor customization point prototype."
@@ -801,19 +702,20 @@ Part of mdspan const-accessor customization point prototype."
 
 ---
 
-## Task 8: Composition test — `submdspan` ⇄ `as_const`
-
-Validates that `submdspan(as_const(md))` and `as_const(submdspan(md))` produce the same mdspan type.
+## Task 9: Composition test — `submdspan` ⇄ `element_cast`
 
 **Files:**
-- Create test: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/as_const.composition.pass.cpp`
+- Create: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.composition.pass.cpp`
 
 - [ ] **Step 1: Write the test**
 
 ```cpp
+//===----------------------------------------------------------------------===//
+// (standard header)
+//===----------------------------------------------------------------------===//
+
 // <mdspan>
-//
-// submdspan and as_const compose in either order.
+// submdspan and element_cast<const T> compose in either order.
 
 #include <cuda/std/cassert>
 #include <cuda/std/mdspan>
@@ -827,10 +729,10 @@ __host__ __device__ void test_default_accessor_composition()
   double storage[20]{};
   MD md{storage, E{}};
 
-  auto left  = cuda::std::submdspan(cuda::std::as_const(md),
+  auto left  = cuda::std::submdspan(cuda::std::element_cast<const double>(md),
                                     cuda::std::full_extent, 0);
-  auto right = cuda::std::as_const(cuda::std::submdspan(md,
-                                    cuda::std::full_extent, 0));
+  auto right = cuda::std::element_cast<const double>(
+                 cuda::std::submdspan(md, cuda::std::full_extent, 0));
 
   static_assert(cuda::std::is_same_v<decltype(left), decltype(right)>);
 }
@@ -842,48 +744,72 @@ int main(int, char**)
 }
 ```
 
-- [ ] **Step 2: Run the test**
+- [ ] **Step 2: Confirm it passes**
 
-```bash
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.as_const.as_const.composition
-```
-
-Expected: PASS. If FAIL, the `offset_policy` of `default_accessor<const T>` is not matching `const_accessor_for_t<default_accessor<T>::offset_policy>`. Re-check Task 3's alias definition.
+If FAIL, the offset_policy of the const counterpart does not agree with the const counterpart of the offset_policy. Re-check Task 3's alias.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/as_const.composition.pass.cpp
-git commit -m "[libcudacxx] Test submdspan/as_const composition
+git add libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.composition.pass.cpp
+git commit -m "[libcudacxx] Test submdspan/element_cast composition
 
-submdspan(as_const(md)) and as_const(submdspan(md)) yield the same type
-for default_accessor, confirming the const-preserving offset_policy
-requirement from the spec.
+Verifies submdspan(element_cast<const T>(md)) and
+element_cast<const T>(submdspan(md)) yield the same mdspan type for
+default_accessor.
 
 Part of mdspan const-accessor customization point prototype."
 ```
 
 ---
 
-## Task 9: Ill-formed case — `.fail.cpp` negative test
+## Task 10: Negative tests (.fail.cpp)
 
-Verifies that `cuda::std::as_const(md)` is constrained out when the accessor has no usable const counterpart.
+Two negative tests: one for a non-cv-reachable target type, one for an accessor with no valid const counterpart.
 
 **Files:**
-- Create test: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/as_const.no_const.fail.cpp`
+- Create: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.not_cv_reachable.fail.cpp`
+- Create: `libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.no_const.fail.cpp`
 
-- [ ] **Step 1: Write the failing-compile test**
+- [ ] **Step 1: Write `element_cast.not_cv_reachable.fail.cpp`**
 
 ```cpp
+//===----------------------------------------------------------------------===//
+// (standard header)
+//===----------------------------------------------------------------------===//
+
 // <mdspan>
-//
-// Accessor with no usable const counterpart: cuda::std::as_const(md) must
-// be ill-formed (no viable overload).
+// element_cast<T>(md) with T not cv-reachable from element_type: ill-formed.
 
 #include <cuda/std/mdspan>
 
-// Non-template accessor; substitution fallback can't produce a const
-// counterpart. No const_accessor_type member; no user specialization.
+int main(int, char**)
+{
+  using E = cuda::std::extents<int, 3>;
+  double storage[3]{};
+  cuda::std::mdspan<double, E> md{storage, E{}};
+
+  // Expected: ill-formed. 'int' is not cv-reachable from 'double'.
+  auto bad = cuda::std::element_cast<int>(md);
+  (void)bad;
+
+  return 0;
+}
+```
+
+- [ ] **Step 2: Write `element_cast.no_const.fail.cpp`**
+
+```cpp
+//===----------------------------------------------------------------------===//
+// (standard header)
+//===----------------------------------------------------------------------===//
+
+// <mdspan>
+// Accessor without a valid const counterpart: element_cast<const T>(md) is ill-formed.
+
+#include <cuda/std/mdspan>
+
+// Non-template accessor; no const_accessor_type; no user specialization.
 struct opaque_accessor {
   using offset_policy    = opaque_accessor;
   using element_type     = double;
@@ -901,37 +827,30 @@ int main(int, char**)
   double storage[3]{};
   MD md{storage, E{}, opaque_accessor{}};
 
-  // Expected: this line fails to compile — const_accessor_for<opaque_accessor>
-  // has no nested 'type', so the trait alias is ill-formed and the as_const
-  // overload is constrained out.
-  auto ro = cuda::std::as_const(md); // expected-error {{no matching function for call to 'as_const'}}
-  (void)ro;
+  // Expected: ill-formed. const_accessor_for<opaque_accessor> has no 'type'.
+  auto bad = cuda::std::element_cast<const double>(md);
+  (void)bad;
 
   return 0;
 }
 ```
 
-*Note:* libcudacxx's `.fail.cpp` driver checks that the file fails to compile. The `// expected-error` annotation syntax may or may not be used by the harness — verify by looking at an existing `.fail.cpp` in the repo before finalizing the comment.
+- [ ] **Step 3: Verify both `.fail.cpp` files fail to compile** (the libcudacxx test harness treats compilation failure as success for `.fail.cpp`).
 
-- [ ] **Step 2: Run the test**
+*Note:* the `expected-error` annotation format used by libcudacxx's harness may differ; check a sibling `.fail.cpp` in the repo and match its conventions.
 
-```bash
-cmake --build <build_dir> --target libcudacxx.test.std.containers.views.mdspan.as_const.as_const.no_const
-```
-
-Expected: The `.fail.cpp` driver should report PASS because the compilation failed as expected.
-
-If the driver instead reports a different diagnostic, refine the test's expected-error annotation or restructure the test so the error is localized to the `cuda::std::as_const(md)` call.
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add libcudacxx/test/libcudacxx/std/containers/views/mdspan/as_const/as_const.no_const.fail.cpp
-git commit -m "[libcudacxx] Negative test: accessor without const counterpart
+git add libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.not_cv_reachable.fail.cpp \
+        libcudacxx/test/libcudacxx/std/containers/views/mdspan/element_cast/element_cast.no_const.fail.cpp
+git commit -m "[libcudacxx] Negative tests for element_cast
 
-Verifies that cuda::std::as_const(mdspan) is constrained out of overload
-resolution when the accessor's const_accessor_for trait yields no type
-(non-template accessor, no member, no user specialization).
+Two .fail.cpp tests:
+- element_cast<int>(mdspan<double>): T not cv-reachable from element_type.
+- element_cast<const double>(mdspan<_, _, _, opaque_accessor>): no valid
+  const counterpart (non-template accessor without member or
+  specialization).
 
 Part of mdspan const-accessor customization point prototype."
 ```
@@ -942,18 +861,16 @@ Part of mdspan const-accessor customization point prototype."
 
 **Spec coverage** (against `docs/superpowers/specs/2026-04-18-mdspan-const-accessor-cp-design.md`):
 
-- Section 1 (trait core) — Tasks 1, 2 (skeleton + member hook + substitution)
-- Section 2 (`std::as_const` overload) — Task 5
-- Section 3 (explicit opt-in for default/aligned) — Tasks 3, 4
-- Section 4 (submdspan composition) — Task 8
-- Section 5 (libcudacxx prototype plan) — this plan
-- Section 6 (open questions / out-of-scope) — intentionally no tasks; cross-const `common_reference_with` and `element_cast` are explicitly deferred
-- Three scenarios — Tasks 5 (S1), 6 (S2), 7 (S3)
-- Ill-formed case — Task 9
-- Idempotence / same-data guarantee — covered implicitly via Scenario 1 runtime assertion
+- *What "const version of an accessor" means* — all six invariants exercised indirectly by Tasks 1–9.
+- *Who writes what* — Tasks 2 (trait), 3–4 (member opt-in), 5 (element_cast), 8 (user specialization).
+- *Three scenarios* — Tasks 5 (S1), 7 (S2), 8 (S3).
+- *Composition with submdspan* — Task 9.
+- *Ill-formed cases* — Task 10.
+- *Identity case* — Task 6.
+- **Out of scope for prototype**: `basic_common_reference` specializations in `<atomic>` (belong in the paper's wording only; prototype validates mdspan-side only).
 
-**Placeholder scan**: the one intentional placeholder is the CMake/lit target-name pattern (`libcudacxx.test....`) — executors must adjust to the repo's actual target names. The `.fail.cpp` expected-error comment is also flagged as a "verify against existing files" note. No TODOs, no "implement later" markers.
+**Placeholder scan**: test-build commands use standalone `clang++` compile-checks rather than the lit harness, which is acceptable validation for this prototype. If the engineer wants to run the lit suite, the exact `cmake --build --target …` targets must be discovered from the repo's CMake configuration.
 
-**Type consistency**: `const_accessor_for`, `const_accessor_for_t`, `const_accessor_type`, `__has_const_accessor_type` — spelling consistent across tasks.
+**Type consistency**: `const_accessor_for`, `const_accessor_for_t`, `const_accessor_type`, `__has_const_accessor_type`, `element_cast` — spelling consistent across tasks.
 
-**Scope**: contained. Prototype only. Paper draft is a separate plan.
+**Scope**: libcudacxx prototype only. The `basic_common_reference` specializations (bundled into the WG21 paper per the spec) are NOT implemented here; proving the mdspan-side CP is the prototype's job.
