@@ -8,54 +8,68 @@
 //===----------------------------------------------------------------------===//
 
 // <mdspan>
-// const_accessor_for prefers A::const_accessor_type when present.
+// const_accessor_for's member-hook path must take priority over the
+// template-substitution fallback. This test covers two cases:
+//
+//   1. The member alias points to Foo<const T> — the same type substitution
+//      would produce. Both paths agree; the trait should return that type.
+//   2. The member alias points to a DIFFERENT type than substitution would
+//      produce. The trait must return the member-specified type, proving
+//      the author's explicit choice is honored.
 
 #include <cuda/std/mdspan>
 #include <cuda/std/type_traits>
 #include "test_macros.h"
 
+// Case 1: member alias points to Foo<const T> — matches what substitution
+// would produce.
 template <class T>
-struct accessor_with_member {
-  using offset_policy       = accessor_with_member;
+struct accessor_member_matches_substitution {
+  using offset_policy       = accessor_member_matches_substitution;
   using element_type        = T;
   using reference           = T&;
   using data_handle_type    = T*;
-  using const_accessor_type = accessor_with_member<const T>;
+  using const_accessor_type = accessor_member_matches_substitution<const T>;
 };
 
-// Distinguishable from template substitution: a type substitution would NOT produce.
+// Case 2: member alias points to `custom_const_type`, which is deliberately
+// NOT accessor_member_differs_from_substitution<const T>. If the trait
+// incorrectly ran substitution, it would produce the latter; the fact that
+// it produces `custom_const_type` proves the member hook won.
 template <class T>
-struct accessor_member_divergent {
-  using offset_policy    = accessor_member_divergent;
+struct accessor_member_differs_from_substitution {
+  using offset_policy    = accessor_member_differs_from_substitution;
   using element_type     = T;
   using reference        = T&;
   using data_handle_type = T*;
-  struct const_variant {
-    using offset_policy    = const_variant;
+
+  struct custom_const_type {
+    using offset_policy    = custom_const_type;
     using element_type     = const T;
     using reference        = const T&;
     using data_handle_type = const T*;
   };
-  using const_accessor_type = const_variant;
+
+  using const_accessor_type = custom_const_type;
 };
 
-__host__ __device__ void test_member_matches_substitution()
+__host__ __device__ void test_both_paths_agree()
 {
-  using A = accessor_with_member<int>;
+  using A = accessor_member_matches_substitution<int>;
   static_assert(cuda::std::is_same_v<cuda::std::const_accessor_for_t<A>,
-                                     accessor_with_member<const int>>);
+                                     accessor_member_matches_substitution<const int>>);
 }
 
-__host__ __device__ void test_member_wins_over_substitution()
+__host__ __device__ void test_member_wins_when_paths_diverge()
 {
-  using A = accessor_member_divergent<int>;
+  using A = accessor_member_differs_from_substitution<int>;
   static_assert(cuda::std::is_same_v<cuda::std::const_accessor_for_t<A>,
-                                     typename A::const_variant>);
+                                     typename A::custom_const_type>);
 }
 
 int main(int, char**)
 {
-  test_member_matches_substitution();
-  test_member_wins_over_substitution();
+  test_both_paths_agree();
+  test_member_wins_when_paths_diverge();
   return 0;
 }
