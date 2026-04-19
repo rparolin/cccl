@@ -873,4 +873,4 @@ Part of mdspan const-accessor customization point prototype."
 
 **Type consistency**: `const_accessor_for`, `const_accessor_for_t`, `const_accessor_type`, `__has_const_accessor_type`, `element_cast` — spelling consistent across tasks.
 
-**Scope**: libcudacxx prototype only. The `basic_common_reference` specializations (bundled into the WG21 paper per the spec) are NOT implemented here; proving the mdspan-side CP is the prototype's job.
+**Scope**: libcudacxx prototype only. The `basic_common_reference` specializations (bundled into the WG21 paper per the spec) are NOT implemented here; proving the mdspan-side customization point is the prototype's job.

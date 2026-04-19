@@ -420,7 +420,7 @@ impact; the trait and function template are header-only additions.
 
 - `basic_common_reference` specializations in `<atomic>` (they belong
   in the paper's wording but are outside the prototype scope — the
-  prototype validates the mdspan-side CP only).
+  prototype validates the mdspan-side customization point only).
 - Broader `element_cast<T>` that handles element-type conversion
   (separate design question).
 
@@ -545,11 +545,11 @@ freestanding operations (e.g., `submdspan`) less uniform.
 ### Separate companion paper for `basic_common_reference`
 
 Considered (see "B2" in brainstorming notes): keep this paper focused
-on the mdspan CP and defer the `atomic_ref` cross-const
+on the mdspan customization point and defer the `atomic_ref` cross-const
 `basic_common_reference` fixes to a separate paper. Rejected because the
 motivating case (`atomic_ref<const T>` in mdspan, used alongside the
 non-const original) only works end-to-end when both changes ship
-together. Shipping the CP alone leaves the motivating example
+together. Shipping the customization point alone leaves the motivating example
 half-broken. Current scope bundles both (see cross-const section); the
 bundle should still coordinate with P2689R3 authors to avoid parallel
 proposals.

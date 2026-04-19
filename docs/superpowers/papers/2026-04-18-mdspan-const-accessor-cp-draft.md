@@ -61,11 +61,11 @@ static_assert(std::common_reference_with<std::vector<bool>::reference,       con
 static_assert(std::common_reference_with<std::vector<bool>::const_reference, bool&>);
 ```
 
-Consequence: any standard facility that checks `common_reference_with` across a proxy and a non-proxy reference — including `indirectly_readable`, `indirectly_writable`, and range adaptors that interoperate const and non-const views — refuses to compile. Without closing this gap, an mdspan CP alone is only useful for non-proxy accessors; the motivating `atomic_ref` case doesn't work end to end.
+Consequence: any standard facility that checks `common_reference_with` across a proxy and a non-proxy reference — including `indirectly_readable`, `indirectly_writable`, and range adaptors that interoperate const and non-const views — refuses to compile. Without closing this gap, an mdspan customization point alone is only useful for non-proxy accessors; the motivating `atomic_ref` case doesn't work end to end.
 
 ### Why bundle both in one paper
 
-The mdspan-side CP and the `atomic_ref` cross-const `basic_common_reference` fixes are independently small, but they together solve the motivating example. Shipping the CP alone leaves proxy-reference accessors half-broken; shipping the `basic_common_reference` fixes alone doesn't give users a way to construct the const view. Bundling avoids the bad intermediate state where neither half is useful.
+The mdspan-side customization point and the `atomic_ref` cross-const `basic_common_reference` fixes are independently small, but they together solve the motivating example. Shipping the customization point alone leaves proxy-reference accessors half-broken; shipping the `basic_common_reference` fixes alone doesn't give users a way to construct the const view. Bundling avoids the bad intermediate state where neither half is useful.
 
 This paper's `<atomic>` additions overlap with P2689R3. Section *Coordination* (below) proposes merging or cross-referencing rather than parallel proposals.
 
@@ -181,7 +181,7 @@ mdspan's existing converting-constructor template already handles the case where
 
 ### Why bundle `basic_common_reference` here (vs. split paper)
 
-Splitting was considered and rejected. The motivating example (`atomic_ref<const T>` in mdspan, used alongside the non-const original) only works end-to-end with both changes landed. Shipping the mdspan CP alone leaves users with a syntactically correct mdspan that cannot be used in standard algorithms that exercise `common_reference_with` across reference types. The bundled approach keeps users from hitting that pothole.
+Splitting was considered and rejected. The motivating example (`atomic_ref<const T>` in mdspan, used alongside the non-const original) only works end-to-end with both changes landed. Shipping the mdspan customization point alone leaves users with a syntactically correct mdspan that cannot be used in standard algorithms that exercise `common_reference_with` across reference types. The bundled approach keeps users from hitting that pothole.
 
 ### Why narrow `element_cast<T>` (only cv-changes) for this paper
 
