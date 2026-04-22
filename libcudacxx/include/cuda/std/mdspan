@@ -24,7 +24,6 @@
 #include <cuda/std/__fwd/mdspan.h>
 #include <cuda/std/__mdspan/aligned_accessor.h>
 #include <cuda/std/__mdspan/concepts.h>
-#include <cuda/std/__mdspan/const_accessor_for.h>
 #include <cuda/std/__mdspan/const_view.h>
 #include <cuda/std/__mdspan/default_accessor.h>
 #include <cuda/std/__mdspan/extents.h>

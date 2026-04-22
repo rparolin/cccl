@@ -31,7 +31,6 @@
 #include <cuda/std/__concepts/concept_macros.h>
 #include <cuda/std/__fwd/mdspan.h>
 #include <cuda/std/__mdspan/concepts.h>
-#include <cuda/std/__mdspan/const_accessor_for.h>
 #include <cuda/std/__mdspan/default_accessor.h>
 #include <cuda/std/__mdspan/empty_base.h>
 #include <cuda/std/__mdspan/extents.h>
@@ -581,46 +580,6 @@ _CCCL_HOST_DEVICE mdspan(const typename _AccessorType::data_handle_type, const _
             typename _MappingType::extents_type,
             typename _MappingType::layout_type,
             _AccessorType>;
-
-// cuda::std::element_cast<T>(mdspan) — produces an mdspan whose element_type
-// is T, over the same data as the input.
-//
-// Only two targets are supported:
-//
-//   1. T == element_type               — identity. Returns the input unchanged.
-//   2. T == add_const_t<element_type>  — read-only view. The resulting mdspan's
-//                                        accessor is const_accessor_for_t<A>,
-//                                        which names the const counterpart of
-//                                        the original accessor.
-//
-// This is strictly a cv-qualification cast. Other targets — a different
-// element type (e.g. float -> double) or volatile qualification — are
-// not supported and produce a compile error.
-
-// Identity overload: T == element_type → same mdspan back.
-_CCCL_TEMPLATE(class _T, class _ElementType, class _Extents, class _LayoutPolicy, class _AccessorPolicy)
-_CCCL_REQUIRES(is_same_v<_T, _ElementType>)
-[[nodiscard]] _CCCL_API constexpr mdspan<_T, _Extents, _LayoutPolicy, _AccessorPolicy>
-element_cast(const mdspan<_ElementType, _Extents, _LayoutPolicy, _AccessorPolicy>& __md) noexcept
-{
-  return __md;
-}
-
-// Const-add overload: T == add_const_t<element_type> → mdspan with the
-// const counterpart accessor.
-_CCCL_TEMPLATE(class _T, class _ElementType, class _Extents, class _LayoutPolicy, class _AccessorPolicy)
-_CCCL_REQUIRES(is_same_v<_T, add_const_t<_ElementType>> _CCCL_AND(!is_same_v<_T, _ElementType>))
-[[nodiscard]] _CCCL_API constexpr
-  mdspan<_T, _Extents, _LayoutPolicy, const_accessor_for_t<_AccessorPolicy>>
-  element_cast(const mdspan<_ElementType, _Extents, _LayoutPolicy, _AccessorPolicy>& __md) noexcept
-{
-  using _C      = const_accessor_for_t<_AccessorPolicy>;
-  using _Result = mdspan<_T, _Extents, _LayoutPolicy, _C>;
-  return _Result{
-    typename _C::data_handle_type{__md.data_handle()},
-    __md.mapping(),
-    _C{__md.accessor()}};
-}
 
 _CCCL_END_NAMESPACE_CUDA_STD
 

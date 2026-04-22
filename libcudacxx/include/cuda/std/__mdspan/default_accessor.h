@@ -30,7 +30,6 @@
 
 #include <cuda/std/__concepts/concept_macros.h>
 #include <cuda/std/__fwd/mdspan.h>
-#include <cuda/std/__type_traits/add_const.h>
 #include <cuda/std/__type_traits/is_abstract.h>
 #include <cuda/std/__type_traits/is_array.h>
 #include <cuda/std/__type_traits/is_convertible.h>
@@ -46,11 +45,10 @@ struct default_accessor
   static_assert(!is_array_v<_ElementType>, "default_accessor: template argument may not be an array type");
   static_assert(!is_abstract_v<_ElementType>, "default_accessor: template argument may not be an abstract class");
 
-  using offset_policy       = default_accessor;
-  using element_type        = _ElementType;
-  using reference           = _ElementType&;
-  using data_handle_type    = _ElementType*;
-  using const_accessor_type = default_accessor<add_const_t<_ElementType>>;
+  using offset_policy    = default_accessor;
+  using element_type     = _ElementType;
+  using reference        = _ElementType&;
+  using data_handle_type = _ElementType*;
 
   _CCCL_HIDE_FROM_ABI constexpr default_accessor() noexcept = default;
 

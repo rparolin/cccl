@@ -36,8 +36,6 @@ __host__ __device__ void test()
   static_assert(cuda::std::is_same_v<typename A::element_type, T>);
   static_assert(cuda::std::is_same_v<typename A::reference, T&>);
   static_assert(cuda::std::is_same_v<typename A::data_handle_type, T*>);
-  static_assert(cuda::std::is_same_v<typename A::const_accessor_type,
-                                     cuda::std::default_accessor<cuda::std::add_const_t<T>>>);
 
   static_assert(cuda::std::semiregular<A>, "");
   static_assert(cuda::std::is_trivially_copyable<A>::value, "");
