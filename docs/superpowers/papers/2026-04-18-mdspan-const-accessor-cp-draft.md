@@ -21,7 +21,7 @@
 
 `std::mdspan<T, …, Accessor>` has no standard mechanism for producing a read-only view of the same data with `const T` as its element type. This paper proposes:
 
-1. A **customization point object** `std::const_view` in `<mdspan>`. Called with an mdspan, it returns an mdspan whose element type is `const T` over the same data. Called with an accessor, it returns the accessor's const counterpart. Users customize it for their own accessors via an ADL `tag_invoke` hook; consumers of uncooperative third-party accessors have a small escape-hatch trait `std::const_view_override`.
+1. A **customization point object** `std::const_view` in `<mdspan>`. Called with an mdspan, it returns an mdspan whose element type is `const T` over the same data. Called with an accessor, it returns the accessor's const counterpart. Users customize it for their own accessors via an ADL `tag_invoke` hook — the same idiom used by modern C++ customization points in `<ranges>` and `<execution>`.
 2. Library-provided handling for `std::default_accessor` and `std::aligned_accessor` through direct overloads inside the CPO. No new members are added to these accessors.
 3. `basic_common_reference` specializations in `<atomic>` for cross-const pairs of `std::atomic_ref`, so the resulting mdspan can be used with standard algorithms that require `common_reference_with` across reference types.
 
@@ -102,7 +102,7 @@ namespace std {
 
 #### Customization paths
 
-Customization is through either of two mechanisms, consulted in priority order:
+Customization is through two mechanisms, consulted in priority order:
 
 **1. Author-facing: ADL `tag_invoke` hook.** An accessor author provides a free function in their own namespace; `const_view` finds it via argument-dependent lookup:
 
@@ -121,73 +121,56 @@ namespace user_lib {
 
 This is the modern C++ customization-point idiom shared with `std::ranges::begin`, `std::execution` CPOs, and similar facilities. The author never opens `namespace std` and never writes a template-specialization.
 
-**2. Consumer-facing: trait override escape hatch.** A consumer using a *third-party* accessor — one whose author did not provide a `tag_invoke` hook and which the consumer cannot modify — can specialize an escape-hatch trait:
+**2. Library-provided built-ins.** The standard library provides direct handling for `std::default_accessor<T>` and `std::aligned_accessor<T, N>` — their const counterparts are `std::default_accessor<const T>` and `std::aligned_accessor<const T, N>` respectively. No template-argument substitution fallback is proposed; the built-ins are enumerated explicitly.
+
+If neither path yields a result, `std::const_view(x)` is ill-formed with a clean "no matching call" diagnostic at the call site.
+
+#### What about third-party accessors the consumer can't modify?
+
+A user of a *third-party* accessor whose vendor did not provide a `tag_invoke` hook has no way to reach into the vendor's namespace to add one. This is a real scenario, and this paper's answer is the same as the ranges library's answer for the analogous case: **wrap the type**.
+
+A minimal wrapping adapter forwards the accessor's behaviour and carries its own `tag_invoke` hook:
 
 ```cpp
-namespace std {
+namespace my_lib {
   template <class T>
-  struct const_view_override<vendor::gpu_accessor<T>> {
-    using type = vendor::gpu_accessor<const T>;
+  struct const_view_adapter {
+    using offset_policy    = const_view_adapter;
+    using element_type     = T;
+    using reference        = T&;
+    using data_handle_type = T*;
+
+    vendor::gpu_accessor<T> base_;
+
+    _CCCL_HIDE_FROM_ABI constexpr const_view_adapter() = default;
+
+    _CCCL_API constexpr reference
+    access(data_handle_type __p, std::size_t __i) const noexcept { return base_.access(__p, __i); }
+
+    _CCCL_API constexpr data_handle_type
+    offset(data_handle_type __p, std::size_t __i) const noexcept { return base_.offset(__p, __i); }
   };
+
+  // Opt in for the adapter — not for vendor::gpu_accessor itself.
+  template <class T>
+  const_view_adapter<const T>
+  tag_invoke(decltype(std::const_view), const_view_adapter<T>) noexcept
+  { return {}; }
 }
 ```
 
-`const_view_override` is a small trait that exists solely for this escape-hatch role. It is consulted only when no ADL hook is found.
+The user then constructs their mdspan using `my_lib::const_view_adapter<T>` as its accessor rather than `vendor::gpu_accessor<T>` directly. `std::const_view` works on it via the adapter's ADL hook.
 
-##### Precedent in the standard
+This is the same discipline that `std::ranges` expects when a user's type doesn't natively satisfy a range concept: wrap it (`std::views::all`, `std::ranges::subrange`, a custom adapter) rather than ask the standard library for a back-door override. An earlier draft of this paper proposed such a back-door — a `std::const_view_override<A>` trait that consumers could specialize in `namespace std` — but it was dropped for consistency with the ranges / execution CPO idioms, and because the wrapping-accessor pattern is already what users reach for when they need to customize a third-party type's behaviour.
 
-User specialization of a standard-library class template for a user-defined type is a well-established pattern in C++. Two familiar examples:
+#### Why ADL customization (and not member-typed aliases or trait specialization)
 
-**`std::hash<T>`.** Any user-defined type `T` that needs to participate in `std::unordered_map`, `std::unordered_set`, or any other facility that hashes through `std::hash` specializes it in `namespace std`:
+The single ADL `tag_invoke` hook replaces two alternative customization mechanisms that earlier drafts considered:
 
-```cpp
-namespace std {
-  template <>
-  struct hash<MyType> {
-    size_t operator()(const MyType&) const noexcept { /* ... */ }
-  };
-}
-```
+- **Member-typed alias** (`A::const_accessor_type`) was rejected because it forces every accessor to carry a new library-mandated member and doesn't scale to accessors whose const version is not `Foo<const T>` (see `Why no template-substitution fallback` below).
+- **Trait specialization in `namespace std`** (`std::const_view_override`) was rejected because it mixes the older `std::hash` pattern with the modern CPO pattern, encouraging `namespace std` specialization where a wrapper accessor is the cleaner discipline.
 
-The container consults `std::hash<MyType>{}(value)` at the call site; the user's specialization is found through ordinary template lookup. The standard explicitly permits this per [namespace.std] as long as at least one template argument is a user-defined type.
-
-**`std::formatter<T, CharT>`.** Same shape. Users specialize `std::formatter<MyType>` so that `std::format("{}", myType)` works:
-
-```cpp
-namespace std {
-  template <>
-  struct formatter<MyType> {
-    constexpr auto parse(format_parse_context& ctx);
-    auto format(const MyType& v, format_context& ctx) const;
-  };
-}
-```
-
-Specialized in `namespace std`, found automatically by `std::format` at the call site.
-
-**`const_view_override` is structurally identical.** A consumer specializes the trait in `namespace std` for a user-defined accessor type; the `const_view` CPO consults `const_view_override<A>::type` as one of its resolution paths, finds the user's specialization, and routes through it. Nothing is novel about this as a library-design pattern.
-
-**One usage nuance worth naming explicitly.** The common case for `std::hash` and `std::formatter` is that the *author* of `MyType` specializes the trait because hashing or formatting is a responsibility intrinsic to the type. The primary use case for `const_view_override` is the opposite: the *consumer* specializes it for a vendor type because the vendor didn't provide a `tag_invoke` hook. Both are legal under [namespace.std] — the standard permits specialization for any user-defined type, not only "your own" types — but because of this inversion we describe `const_view_override` as an "escape hatch" rather than the expected customization path. The ADL hook is where most customization should live.
-
-The well-known hazards of `namespace std` specialization apply unchanged:
-
-- If two translation units provide different `const_view_override<V>` specializations for the same `V`, the program has an ODR violation — the same hazard that exists for `std::hash` today. The fix is the same: pick a single canonical header for the specialization.
-- If the vendor later adds their own `tag_invoke` hook, the consumer's `const_view_override` specialization becomes redundant but continues to compile (ADL path is consulted first, so the trait specialization is silently skipped). The consumer can remove their specialization at leisure without breaking anything.
-
-Neither hazard is new. They are inherited from the decades-old `std::hash` precedent.
-
-**3. Library-provided built-ins.** The standard library provides direct handling for `std::default_accessor<T>` and `std::aligned_accessor<T, N>` — their const counterparts are `std::default_accessor<const T>` and `std::aligned_accessor<const T, N>` respectively. No template-argument substitution fallback is proposed; the built-ins are enumerated explicitly.
-
-If none of these paths yield a result, `std::const_view(x)` is ill-formed with a clean "no matching call" diagnostic at the call site.
-
-#### Why both an ADL hook and a trait override
-
-The two customization paths serve two genuinely different audiences, and **neither alone covers the other's case**:
-
-- The **ADL hook** is for the accessor's **author**. They own the type and provide a free function next to it in their own namespace. No `namespace std` gymnastics; follows the standard's modern CPO customization pattern.
-- The **trait override** is for the accessor's **consumer**. When the user does not own the accessor type and the vendor did not opt in, ADL has nowhere to find a hook. The trait override is the escape hatch — analogous to specializing `std::hash<UserType>` today.
-
-Dropping the ADL hook would force every accessor author to specialize a standard-library template in `namespace std` for their own type — awkward and inconsistent with how recent C++ customization points are designed. Dropping the trait override would strand consumers of uncooperative third-party accessors.
+ADL customization is how `std::ranges` and `std::execution` facilities are designed; applying the same idiom here keeps the customization surface uniform across the modern standard library.
 
 The library built-ins are orthogonal to these two: they cover the standard accessors directly so users never write anything in the common case.
 
@@ -262,7 +245,7 @@ Also considered — and rejected — was a generic fallback that, for any access
 - **Compiler fragility.** Template-template argument matching in partial specializations — especially with packs — has had persistent interop bugs across Clang and GCC. The CUTLASS project has felt these pains. Relying on this in a standard-library customization point bakes in implementation divergence.
 - **Silent miscompilation on non-orthogonal parameters.** User accessors commonly have template parameters whose meaning depends on the first (e.g., a policy defaulted from `T`, alias templates, tag-dependent bool parameters). A blanket substitution would produce the wrong answer without any diagnostic.
 
-The chosen design enumerates the library-supported accessors directly and requires explicit opt-in (via ADL hook or trait override) for any user accessor whose const version is not a standard-library one.
+The chosen design enumerates the library-supported accessors directly and requires explicit opt-in (via the ADL `tag_invoke` hook) for any user accessor whose const version is not a standard-library one.
 
 ### `basic_common_reference` specializations in `<atomic>`
 
@@ -390,7 +373,7 @@ Not every accessor should have a const counterpart. Some accessors wrap APIs who
 - An accessor over a network endpoint whose each access may change the destination or carry request metadata; "const" doesn't have a meaningful analog.
 - An accessor maintaining a cache or connection pool where every access has side effects not reducible to pure reads.
 
-For these accessors, "the const counterpart" is not merely inconvenient to define — it has no natural meaning. The correct design choice by the author is to **not opt in**: they provide no ADL `tag_invoke` hook, and no one specializes `const_view_override` on their behalf. `std::const_view(md)` on such an accessor is ill-formed, and that is the right answer.
+For these accessors, "the const counterpart" is not merely inconvenient to define — it has no natural meaning. The correct design choice by the author is to **not opt in**: they provide no ADL `tag_invoke` hook. `std::const_view(md)` on such an accessor is ill-formed, and that is the right answer.
 
 ### Why no universal fall-back
 
@@ -441,7 +424,7 @@ Recommendation from the authors of this paper: merge if scope timing permits; ot
 A libcudacxx prototype of the CPO-based design is implemented on the CCCL fork (branch `feature/mdspan-const-accessor-cp-design`). It provides:
 
 - `cuda::std::const_view` as a customization point object declared in `<cuda/std/mdspan>`, with direct overloads for `cuda::std::default_accessor` and `cuda::std::aligned_accessor`.
-- Author-side customization via ADL `tag_invoke` hooks; consumer-side escape hatch via `cuda::std::const_view_override`.
+- Author-side customization via ADL `tag_invoke` hooks. No `namespace std` specialization path; consumers of uncooperative third-party accessors wrap the vendor type in a local adapter.
 - No nested alias on the standard-library accessors.
 - No template-substitution fallback.
 
@@ -449,7 +432,7 @@ The prototype validates that:
 
 - `std::const_view(md)` composes cleanly with `std::submdspan`: the two operations commute type-wise for `default_accessor` and `aligned_accessor`.
 - `std::const_view(md)` is O(1) — no element copy, no allocation — and the result's `data_handle()` is the same address as the input's.
-- An accessor with neither an ADL hook nor a `const_view_override` specialization produces a clean "no matching call" diagnostic at the call site (not a deep metaprogramming cascade).
+- An accessor with no ADL hook produces a clean "no matching call" diagnostic at the call site (not a deep metaprogramming cascade).
 - A separate design-demonstration test exercises the proposed `basic_common_reference` specializations against a minimal proxy type that mimics `atomic_ref<T>` / `atomic_ref<const T>`, showing that the specializations close the cross-const `common_reference_with` gap. The production `basic_common_reference` specializations belong in `<atomic>` rather than the prototype's `<mdspan>` scope.
 
 The prototype's tests are organized as `.pass.cpp` / `.fail.cpp` under `libcudacxx/test/libcudacxx/std/containers/views/mdspan/const_view/`. All positive tests compile and run; both negative tests (`no_opt_in.fail.cpp`, `readonly.fail.cpp`) correctly fail to compile as intended.
@@ -462,10 +445,10 @@ The prototype's tests are organized as `.pass.cpp` / `.fail.cpp` under `libcudac
 
 ### Approximate wording changes
 
-1. **§[mdspan.syn]**: add the `const_view` customization point object and the `const_view_override` primary-template escape-hatch trait to the `<mdspan>` synopsis.
+1. **§[mdspan.syn]**: add the `const_view` customization point object to the `<mdspan>` synopsis.
 2. **§[mdspan.const_view]** (new subclause): define `const_view` as a customization point object. Specify:
     - the `mdspan` overload (semantic contract: returns an `mdspan<add_const_t<T>, E, L, C>` where `C` is the result of applying `const_view` to the input accessor; `data_handle()` and `mapping()` are preserved);
-    - the accessor overload dispatch (ADL `tag_invoke` hook → `const_view_override<A>::type` → library built-in);
+    - the accessor overload dispatch (ADL `tag_invoke` hook → library built-in);
     - the library built-in overloads for `default_accessor<T>` → `default_accessor<const T>` and `aligned_accessor<T, N>` → `aligned_accessor<const T, N>`;
     - the diagnostic-quality requirement (no-matching-call diagnostic at the call site).
 3. **§[atomics.ref.*]**: add `basic_common_reference` specializations for the cross-const `atomic_ref` pairs.

@@ -9,8 +9,9 @@
 
 // <mdspan>
 // Smoke test for cuda::std::const_view customization point object.
-// Covers the three resolution paths (ADL hook, trait override, library
-// default_accessor / aligned_accessor built-ins) plus submdspan composition.
+// Covers the two resolution paths (ADL hook, library default_accessor /
+// aligned_accessor built-ins), the wrap-and-hook pattern for third-party
+// accessors, and submdspan composition.
 
 #include <cuda/std/cassert>
 #include <cuda/std/mdspan>
@@ -118,7 +119,9 @@ __host__ __device__ void scenario2_adl_hook()
 }
 
 // --------------------------------------------------------------------------
-// Scenario 3 — third-party accessor, user adds trait override in cuda::std.
+// Scenario 3 — third-party accessor the consumer cannot modify.
+// The vendor did not provide a tag_invoke hook; the consumer wraps the
+// vendor accessor in a local adapter and puts the ADL hook on the adapter.
 // --------------------------------------------------------------------------
 
 namespace vendor {
@@ -143,21 +146,51 @@ struct gpu_accessor {
   offset(data_handle_type __p, cuda::std::size_t __i) const noexcept { return __p + __i; }
 };
 
-// Vendor provides no tag_invoke hook.
+// Vendor provides no tag_invoke hook. The consumer cannot modify this
+// namespace.
 
 } // namespace vendor
 
-_CCCL_BEGIN_NAMESPACE_CUDA_STD
-template <class T>
-struct const_view_override<vendor::gpu_accessor<T>> {
-  using type = vendor::gpu_accessor<const T>;
-};
-_CCCL_END_NAMESPACE_CUDA_STD
+// Consumer's own adapter around vendor::gpu_accessor. Forwards the accessor
+// protocol. The ADL hook lives on the adapter, in the consumer's namespace.
+namespace consumer {
 
-__host__ __device__ void scenario3_trait_override()
+template <class T>
+struct gpu_adapter {
+  using offset_policy    = gpu_adapter;
+  using element_type     = T;
+  using reference        = T&;
+  using data_handle_type = T*;
+
+  vendor::gpu_accessor<T> base_;
+
+  _CCCL_HIDE_FROM_ABI constexpr gpu_adapter() noexcept = default;
+
+  _CCCL_TEMPLATE(class _Other)
+  _CCCL_REQUIRES(cuda::std::is_convertible_v<_Other (*)[], element_type (*)[]>)
+  _CCCL_API constexpr gpu_adapter(gpu_adapter<_Other> __o) noexcept
+    : base_(__o.base_) {}
+
+  [[nodiscard]] _CCCL_API constexpr reference
+  access(data_handle_type __p, cuda::std::size_t __i) const noexcept { return base_.access(__p, __i); }
+
+  [[nodiscard]] _CCCL_API constexpr data_handle_type
+  offset(data_handle_type __p, cuda::std::size_t __i) const noexcept { return base_.offset(__p, __i); }
+};
+
+template <class T>
+_CCCL_API constexpr gpu_adapter<const T>
+tag_invoke(::cuda::std::__const_view_impl::const_view_fn_tag, gpu_adapter<T>) noexcept
+{
+  return {};
+}
+
+} // namespace consumer
+
+__host__ __device__ void scenario3_wrap_and_hook()
 {
   using E = cuda::std::extents<int, 2>;
-  using A = vendor::gpu_accessor<double>;
+  using A = consumer::gpu_adapter<double>;
   using MD = cuda::std::mdspan<double, E, cuda::std::layout_right, A>;
 
   double storage[2] = {7, 8};
@@ -167,7 +200,7 @@ __host__ __device__ void scenario3_trait_override()
   using RO = decltype(ro);
 
   static_assert(cuda::std::is_same_v<typename RO::accessor_type,
-                                     vendor::gpu_accessor<const double>>);
+                                     consumer::gpu_adapter<const double>>);
   assert(ro.data_handle() == md.data_handle());
   assert(ro[0] == storage[0]);
   assert(ro[1] == storage[1]);
@@ -197,7 +230,7 @@ int main(int, char**)
   scenario1_default_accessor();
   scenario1b_aligned_accessor();
   scenario2_adl_hook();
-  scenario3_trait_override();
+  scenario3_wrap_and_hook();
   composition_default_accessor();
   return 0;
 }

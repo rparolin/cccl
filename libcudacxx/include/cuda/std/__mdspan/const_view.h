@@ -34,13 +34,6 @@
 
 _CCCL_BEGIN_NAMESPACE_CUDA_STD
 
-// Escape-hatch trait for third-party accessors: users specialize this in
-// cuda::std for accessors whose authors did not provide a tag_invoke hook
-// and which the user cannot modify.
-template <class _A>
-struct const_view_override
-{};
-
 namespace __const_view_impl
 {
 
@@ -52,10 +45,6 @@ struct const_view_fn_tag
 template <class _A>
 _CCCL_CONCEPT __has_adl_hook =
   _CCCL_REQUIRES_EXPR((_A), _A __a)(tag_invoke(const_view_fn_tag{}, __a));
-
-template <class _A>
-_CCCL_CONCEPT __has_trait_override =
-  _CCCL_REQUIRES_EXPR((_A))(typename(typename const_view_override<_A>::type));
 
 template <class _A>
 _CCCL_CONCEPT __is_default_accessor_like =
@@ -85,29 +74,18 @@ struct const_view_fn
     return tag_invoke(const_view_fn_tag{}, __a);
   }
 
-  // Path 2: trait override.
+  // Path 2a: built-in for default_accessor.
   _CCCL_TEMPLATE(class _A)
-  _CCCL_REQUIRES((!__has_adl_hook<_A>) _CCCL_AND __has_trait_override<_A>)
-  [[nodiscard]] _CCCL_API constexpr auto operator()(_A) const noexcept //
-    -> typename const_view_override<_A>::type
-  {
-    return typename const_view_override<_A>::type{};
-  }
-
-  // Path 3a: built-in for default_accessor.
-  _CCCL_TEMPLATE(class _A)
-  _CCCL_REQUIRES((!__has_adl_hook<_A>) _CCCL_AND(!__has_trait_override<_A>)
-                   _CCCL_AND __is_default_accessor_like<_A>)
+  _CCCL_REQUIRES((!__has_adl_hook<_A>) _CCCL_AND __is_default_accessor_like<_A>)
   [[nodiscard]] _CCCL_API constexpr auto operator()(_A) const noexcept //
     -> default_accessor<add_const_t<typename _A::element_type>>
   {
     return {};
   }
 
-  // Path 3b: built-in for aligned_accessor.
+  // Path 2b: built-in for aligned_accessor.
   _CCCL_TEMPLATE(class _T, size_t _N)
-  _CCCL_REQUIRES((!__has_adl_hook<aligned_accessor<_T, _N>>)
-                   _CCCL_AND(!__has_trait_override<aligned_accessor<_T, _N>>))
+  _CCCL_REQUIRES((!__has_adl_hook<aligned_accessor<_T, _N>>))
   [[nodiscard]] _CCCL_API constexpr auto operator()(aligned_accessor<_T, _N>) const noexcept //
     -> aligned_accessor<add_const_t<_T>, _N>
   {
