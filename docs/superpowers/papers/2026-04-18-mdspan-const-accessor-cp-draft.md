@@ -25,7 +25,7 @@
 2. Library-provided handling for `std::default_accessor` and `std::aligned_accessor` through direct overloads inside the CPO. No new members are added to these accessors.
 3. `basic_common_reference` specializations in `<atomic>` for cross-const pairs of `std::atomic_ref`, so the resulting mdspan can be used with standard algorithms that require `common_reference_with` across reference types.
 
-No new named cast function is proposed. mdspan's existing converting constructor already covers the common case where an accessor has an implicit `A → A_const` conversion (for example, `default_accessor<T>` in C++26); `std::const_view` is the customization surface for every other accessor.
+mdspan's existing converting constructor already covers the common case where an accessor has an implicit `A → A_const` conversion (for example, `default_accessor<T>` in C++26); `std::const_view` is the customization surface for every other accessor. No new casting operation is necessary.
 
 (3) coordinates with P2689R3 ("Atomic Refs Bound to Memory Orderings & Atomic Accessors"); we expect to merge or cross-reference rather than duplicate.
 
@@ -119,7 +119,7 @@ namespace user_lib {
 }
 ```
 
-The author never opens `namespace std` and never writes a specialization. This is the modern C++ customization-point idiom shared with `std::ranges::begin`, `std::execution` CPOs, and similar facilities.
+This is the modern C++ customization-point idiom shared with `std::ranges::begin`, `std::execution` CPOs, and similar facilities. The author never opens `namespace std` and never writes a template-specialization.
 
 **2. Consumer-facing: trait override escape hatch.** A consumer using a *third-party* accessor — one whose author did not provide a `tag_invoke` hook and which the consumer cannot modify — can specialize an escape-hatch trait:
 
@@ -132,7 +132,49 @@ namespace std {
 }
 ```
 
-`const_view_override` is a small trait that exists solely for this escape-hatch role. It is consulted only when no ADL hook is found. The precedent for user specializations of standard-library templates already exists for `std::hash<UserType>` and `std::formatter<UserType>`.
+`const_view_override` is a small trait that exists solely for this escape-hatch role. It is consulted only when no ADL hook is found.
+
+##### Precedent in the standard
+
+User specialization of a standard-library class template for a user-defined type is a well-established pattern in C++. Two familiar examples:
+
+**`std::hash<T>`.** Any user-defined type `T` that needs to participate in `std::unordered_map`, `std::unordered_set`, or any other facility that hashes through `std::hash` specializes it in `namespace std`:
+
+```cpp
+namespace std {
+  template <>
+  struct hash<MyType> {
+    size_t operator()(const MyType&) const noexcept { /* ... */ }
+  };
+}
+```
+
+The container consults `std::hash<MyType>{}(value)` at the call site; the user's specialization is found through ordinary template lookup. The standard explicitly permits this per [namespace.std] as long as at least one template argument is a user-defined type.
+
+**`std::formatter<T, CharT>`.** Same shape. Users specialize `std::formatter<MyType>` so that `std::format("{}", myType)` works:
+
+```cpp
+namespace std {
+  template <>
+  struct formatter<MyType> {
+    constexpr auto parse(format_parse_context& ctx);
+    auto format(const MyType& v, format_context& ctx) const;
+  };
+}
+```
+
+Specialized in `namespace std`, found automatically by `std::format` at the call site.
+
+**`const_view_override` is structurally identical.** A consumer specializes the trait in `namespace std` for a user-defined accessor type; the `const_view` CPO consults `const_view_override<A>::type` as one of its resolution paths, finds the user's specialization, and routes through it. Nothing is novel about this as a library-design pattern.
+
+**One usage nuance worth naming explicitly.** The common case for `std::hash` and `std::formatter` is that the *author* of `MyType` specializes the trait because hashing or formatting is a responsibility intrinsic to the type. The primary use case for `const_view_override` is the opposite: the *consumer* specializes it for a vendor type because the vendor didn't provide a `tag_invoke` hook. Both are legal under [namespace.std] — the standard permits specialization for any user-defined type, not only "your own" types — but because of this inversion we describe `const_view_override` as an "escape hatch" rather than the expected customization path. The ADL hook is where most customization should live.
+
+The well-known hazards of `namespace std` specialization apply unchanged:
+
+- If two translation units provide different `const_view_override<V>` specializations for the same `V`, the program has an ODR violation — the same hazard that exists for `std::hash` today. The fix is the same: pick a single canonical header for the specialization.
+- If the vendor later adds their own `tag_invoke` hook, the consumer's `const_view_override` specialization becomes redundant but continues to compile (ADL path is consulted first, so the trait specialization is silently skipped). The consumer can remove their specialization at leisure without breaking anything.
+
+Neither hazard is new. They are inherited from the decades-old `std::hash` precedent.
 
 **3. Library-provided built-ins.** The standard library provides direct handling for `std::default_accessor<T>` and `std::aligned_accessor<T, N>` — their const counterparts are `std::default_accessor<const T>` and `std::aligned_accessor<const T, N>` respectively. No template-argument substitution fallback is proposed; the built-ins are enumerated explicitly.
 
