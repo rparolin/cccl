@@ -198,6 +198,27 @@ Splitting was considered and rejected. The motivating example (`atomic_ref<const
 
 A fully general `element_cast<T>(md)` that also permits element-type conversion (`float → double`) was considered. It raises its own questions — alignment, compute-vs-view semantics, layout compatibility — each of which deserves a separate paper. The restriction here to cv-qualification changes is a deliberately small first step; the chosen name leaves the door open for a future generalization.
 
+### Naming the operation — `const_view`, and why not the alternatives
+
+(*Forward-looking: this subsection records the naming decision for R1 after early design review. The surrounding subsections and the main body still use the R0 provisional name `element_cast`; R1 will reconcile.*)
+
+Independent of whether the final mechanism is a templated function or a customization point object (see open design questions in R1), the operation needs a name. We considered five candidates and chose **`std::const_view`**. The rejected alternatives and the specific concern for each:
+
+**`std::as_const_view`** — the strongest semantic match to the ranges vocabulary, but `std::ranges::as_const_view<V>` already exists in `<ranges>` as a **class template** with a **structurally different design**:
+
+- `std::ranges::as_const_view<V>` is a **wrapper class** that stores the underlying view in a data member, exposes a `.base()` accessor to unwrap, and synthesizes const behavior through `basic_const_iterator` at iteration time. The element type of the wrapped view does **not** change.
+- Our operation returns a plain `std::mdspan<const T, E, L, /* const-counterpart accessor */>`. It does **not** wrap; the result has no `.base()`; the `element_type` template parameter is directly changed; const-ness is carried by the accessor, not synthesized at access time.
+
+Reusing the name would mislead readers who know the ranges version. They would expect `.base()` to work, expect a wrapper type, expect element-type preservation — and none of those hold. The namespace difference (`std::` vs. `std::ranges::`) does not defuse the confusion: the identifier reads the same in documentation, teaching material, error messages, and search results. Sharing one name between two structurally different operations papers over a real design difference and demands an apologetic "read this paragraph first" explanation that good naming should avoid.
+
+**`std::make_const_view`** — has legitimate precedent via the non-owning adapter factories `std::make_reverse_iterator`, `std::make_move_iterator`, and `std::make_format_args`. Rejected because the dominant `std::make_*` idiom is *owning* factories: `std::make_shared`, `std::make_unique`, `std::make_pair`, `std::make_tuple`, `std::make_optional`, `std::make_any` all allocate or take ownership of newly-constructed objects. A reader encountering `std::make_const_view(md)` cold would likely assume allocation or ownership semantics, neither of which applies to our operation.
+
+**`std::to_const`** — follows the `std::to_X` family (`to_address`, `to_underlying`, `to_string`, `to_chars`, `to_integer`, `to_array`): short and verb-like. Rejected because it reads as parallel to `std::as_const` (from `<utility>`), which is specifically the *shallow* const operation. A name that reads "like as_const but verb-ier" implies shallow semantics; our operation is deep (changes the element type). The name would obscure precisely the property it needs to advertise.
+
+**`std::view_as_const`** — maximally explicit and avoids all collisions, but uses a verb-noun-qualifier word order that no existing standard-library name follows. Would be a novel coinage without an established pattern to cite; the burden of justifying the shape would distract from the design.
+
+**`std::const_view`** (selected) — uses the standard's established `const_X` vocabulary (`const_iterator`, `const_reference`, `const_pointer`, `const_iterator_t`, `const_range_reference_t`). No collision with `std::ranges::as_const_view` or with `std::views::as_const`. Does not carry the owning-factory connotation of `std::make_*`. No shallow-const confusion. The one mild concern — that `const_X` identifiers in the standard are usually types, not function objects — is cushioned by the fact that no existing standard identifier is `std::const_view` at the top level, so no competing reader expectation exists to fight.
+
 ---
 
 ## Coordination with P2689R3
