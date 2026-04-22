@@ -396,21 +396,21 @@ Recommendation from the authors of this paper: merge if scope timing permits; ot
 
 ## Implementation experience
 
-A libcudacxx prototype is in progress on the CCCL fork ([branch link TBD when polished]). An earlier iteration of the prototype implemented an explicit-target-type cast function and a trait with a template-substitution fallback; that iteration is being reworked to match this paper's CPO-based design. The final prototype targets:
+A libcudacxx prototype of the CPO-based design is implemented on the CCCL fork (branch `feature/mdspan-const-accessor-cp-design`). It provides:
 
-- `cuda::std::const_view` as a customization point object in `<cuda/std/mdspan>`, with direct overloads for `cuda::std::default_accessor` and `cuda::std::aligned_accessor`.
+- `cuda::std::const_view` as a customization point object declared in `<cuda/std/mdspan>`, with direct overloads for `cuda::std::default_accessor` and `cuda::std::aligned_accessor`.
 - Author-side customization via ADL `tag_invoke` hooks; consumer-side escape hatch via `cuda::std::const_view_override`.
 - No nested alias on the standard-library accessors.
 - No template-substitution fallback.
 
-The prototype validates (or will validate, as the rework completes) that:
+The prototype validates that:
 
 - `std::const_view(md)` composes cleanly with `std::submdspan`: the two operations commute type-wise for `default_accessor` and `aligned_accessor`.
 - `std::const_view(md)` is O(1) — no element copy, no allocation — and the result's `data_handle()` is the same address as the input's.
 - An accessor with neither an ADL hook nor a `const_view_override` specialization produces a clean "no matching call" diagnostic at the call site (not a deep metaprogramming cascade).
 - A separate design-demonstration test exercises the proposed `basic_common_reference` specializations against a minimal proxy type that mimics `atomic_ref<T>` / `atomic_ref<const T>`, showing that the specializations close the cross-const `common_reference_with` gap. The production `basic_common_reference` specializations belong in `<atomic>` rather than the prototype's `<mdspan>` scope.
 
-The prototype's tests are organized as `.pass.cpp` / `.fail.cpp` under `libcudacxx/test/.../mdspan/`.
+The prototype's tests are organized as `.pass.cpp` / `.fail.cpp` under `libcudacxx/test/libcudacxx/std/containers/views/mdspan/const_view/`. All positive tests compile and run; both negative tests (`no_opt_in.fail.cpp`, `readonly.fail.cpp`) correctly fail to compile as intended.
 
 ---
 
