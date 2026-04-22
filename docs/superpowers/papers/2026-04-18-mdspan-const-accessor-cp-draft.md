@@ -86,35 +86,89 @@ For an accessor `A` with `element_type = T`, the **const version** `C` (produced
 
 This is `const` as C++ already defines it.
 
-### The customization-point trait
+### The `const_view` customization point object
+
+`std::const_view` is a **customization point object** (CPO) — an inline `constexpr` function object of unspecified type, declared in `<mdspan>`. Users call it with either an `mdspan` or an accessor:
 
 ```cpp
 namespace std {
-  template<class A>
-  struct const_accessor_for;
-
-  template<class A>
-  using const_accessor_for_t = typename const_accessor_for<A>::type;
+  inline constexpr /* unspecified */ const_view = /* unspecified */;
 }
 ```
 
-Resolution:
+- `std::const_view(md)` where `md` is an `mdspan<T, E, L, A>` returns an `mdspan<const T, E, L, C>` (where `C` is the const counterpart of `A`) over the same data.
+- `std::const_view(acc)` where `acc` is an accessor returns the const counterpart accessor. The `mdspan` overload delegates to this one internally.
 
-- **Member hook**: if `typename A::const_accessor_type` is a valid accessor type, that's the answer.
-- **Substitution fallback**: otherwise, if `A` is `Tmpl<T, Rest...>` for some class template `Tmpl`, the answer is `Tmpl<std::add_const_t<T>, Rest...>` (if well-formed).
-- **User specialization**: a user may specialize `const_accessor_for` in namespace `std` for accessors they do not control.
-- **Ill-formed otherwise**: the primary template has no nested `type` and the call site gets a clean diagnostic.
+#### Customization paths
 
-#### Why both a member hook and a user specialization
+Customization is through either of two mechanisms, consulted in priority order:
 
-The member hook and the user specialization are **not redundant**. They serve two genuinely different audiences, and **neither alone covers the other's case**:
+**1. Author-facing: ADL `tag_invoke` hook.** An accessor author provides a free function in their own namespace; `const_view` finds it via argument-dependent lookup:
 
-- The **member hook** is for the accessor's **author**. They own the type and add one line inside the class (`using const_accessor_type = …`). Clean, declarative, lives with the type, and does not require reaching into `namespace std`.
-- The **user specialization** is for an accessor's **consumer**. They are using a third-party accessor — `vendor::gpu_accessor<T>` or similar — that they cannot edit. They have no way to add a member to someone else's class, so they specialize the trait from outside instead.
+```cpp
+namespace user_lib {
+  template <class T>
+  struct atomic_accessor { /* element_type, reference, access(), offset(), ... */ };
 
-Dropping the member hook would force accessor authors to specialize a `std::` template from outside their own class, which is awkward and inconsistent with every other accessor customization point in `<mdspan>` (`offset_policy`, `element_type`, `reference`, `data_handle_type` are all member-typed aliases). Dropping the user specialization would leave users of third-party accessors with no recourse when the vendor hasn't opted in.
+  // The library's const_view finds this via ADL on atomic_accessor<T>.
+  template <class T>
+  atomic_accessor<const T>
+  tag_invoke(decltype(std::const_view), atomic_accessor<T>) noexcept
+  { return {}; }
+}
+```
 
-The substitution fallback is the orthogonal third path: a mechanical default for simple template accessors like `default_accessor<T>`, so nobody has to write anything in the common case.
+The author never opens `namespace std` and never writes a specialization. This is the modern C++ customization-point idiom shared with `std::ranges::begin`, `std::execution` CPOs, and similar facilities.
+
+**2. Consumer-facing: trait override escape hatch.** A consumer using a *third-party* accessor — one whose author did not provide a `tag_invoke` hook and which the consumer cannot modify — can specialize an escape-hatch trait:
+
+```cpp
+namespace std {
+  template <class T>
+  struct const_view_override<vendor::gpu_accessor<T>> {
+    using type = vendor::gpu_accessor<const T>;
+  };
+}
+```
+
+`const_view_override` is a small trait that exists solely for this escape-hatch role. It is consulted only when no ADL hook is found. The precedent for user specializations of standard-library templates already exists for `std::hash<UserType>` and `std::formatter<UserType>`.
+
+**3. Library-provided built-ins.** The standard library provides direct handling for `std::default_accessor<T>` and `std::aligned_accessor<T, N>` — their const counterparts are `std::default_accessor<const T>` and `std::aligned_accessor<const T, N>` respectively. No template-argument substitution fallback is proposed; the built-ins are enumerated explicitly.
+
+If none of these paths yield a result, `std::const_view(x)` is ill-formed with a clean "no matching call" diagnostic at the call site.
+
+#### Why both an ADL hook and a trait override
+
+The two customization paths serve two genuinely different audiences, and **neither alone covers the other's case**:
+
+- The **ADL hook** is for the accessor's **author**. They own the type and provide a free function next to it in their own namespace. No `namespace std` gymnastics; follows the standard's modern CPO customization pattern.
+- The **trait override** is for the accessor's **consumer**. When the user does not own the accessor type and the vendor did not opt in, ADL has nowhere to find a hook. The trait override is the escape hatch — analogous to specializing `std::hash<UserType>` today.
+
+Dropping the ADL hook would force every accessor author to specialize a standard-library template in `namespace std` for their own type — awkward and inconsistent with how recent C++ customization points are designed. Dropping the trait override would strand consumers of uncooperative third-party accessors.
+
+The library built-ins are orthogonal to these two: they cover the standard accessors directly so users never write anything in the common case.
+
+#### How `const_view(mdspan)` is implemented
+
+The `mdspan` overload is not customizable; the library always provides the same implementation, which delegates to the accessor overload:
+
+```cpp
+// Sketch; actual wording will be in [mdspan.const_view].
+template <class T, class E, class L, class A>
+constexpr auto const_view_fn::operator()(const mdspan<T, E, L, A>& md) const
+  requires requires (A a) { const_view(a); }
+{
+  using C      = decltype(const_view(md.accessor()));
+  using Result = mdspan<add_const_t<T>, E, L, C>;
+  return Result{
+    typename C::data_handle_type{md.data_handle()},
+    md.mapping(),
+    const_view(md.accessor())
+  };
+}
+```
+
+The constraint `requires { const_view(a); }` ensures the `mdspan` overload is only viable when the accessor has a resolvable const counterpart; otherwise the entire call is ill-formed, consistent with the accessor-level diagnostic.
 
 ### The cast function
 
@@ -137,26 +191,31 @@ Where the result accessor type is:
 
 Other choices — element-type conversion (`float → double`) or `volatile`-qualification — are ill-formed in this revision; see *Future work*.
 
-### Opt-in on standard accessors
+### Handling of standard accessors
 
-Both `std::default_accessor` and `std::aligned_accessor` carry the nested alias explicitly:
+No changes are proposed to `std::default_accessor` or `std::aligned_accessor` themselves — **no new member, no nested alias**. Their const counterparts are handled by direct overloads inside the `const_view` CPO:
 
-```cpp
-template<class ElementType>
-struct default_accessor {
-  // ...existing members...
-  using const_accessor_type = default_accessor<add_const_t<ElementType>>;
-};
+- `std::default_accessor<T>` → `std::default_accessor<const T>`
+- `std::aligned_accessor<T, N>` → `std::aligned_accessor<const T, N>`
 
-template<class ElementType, size_t ByteAlignment>
-struct aligned_accessor {
-  // ...existing members...
-  using const_accessor_type =
-      aligned_accessor<add_const_t<ElementType>, ByteAlignment>;
-};
-```
+Both accessors already provide implicit converting constructors between the non-const and const instantiations in C++26, so the overload bodies are trivial (the result is default-constructible and compatible with the source via the existing converting constructor).
 
-Even though the substitution fallback would produce the same answer, the explicit alias is self-documenting and immune to any future narrowing of the fallback rules.
+#### Why not a nested member alias
+
+An earlier draft added a nested `const_accessor_type` alias to both accessors. That alias is redundant:
+
+- For `default_accessor<T>` and `aligned_accessor<T, N>`, the const counterpart is mechanically `Foo<const T, …>`; the CPO's built-in overload already covers it with two lines of library code.
+- Adding a standard-mandated member to these accessors sets a precedent for *all* user accessors to carry that member, which is precisely what the CPO model is intended to replace.
+- Users who write their own accessors whose const version is *not* `Foo<const T, …>` are served by the ADL hook (a free function, not a member), which is the idiomatic shape. Mixing member-aliases and ADL hooks as two customization mechanisms doubles the surface and the documentation burden for no structural benefit.
+
+#### Why no template-substitution fallback
+
+Also considered — and rejected — was a generic fallback that, for any accessor `Tmpl<T, Rest...>`, would substitute to `Tmpl<add_const_t<T>, Rest...>`. Two problems:
+
+- **Compiler fragility.** Template-template argument matching in partial specializations — especially with packs — has had persistent interop bugs across Clang and GCC. The CUTLASS project has felt these pains. Relying on this in a standard-library customization point bakes in implementation divergence.
+- **Silent miscompilation on non-orthogonal parameters.** User accessors commonly have template parameters whose meaning depends on the first (e.g., a policy defaulted from `T`, alias templates, tag-dependent bool parameters). A blanket substitution would produce the wrong answer without any diagnostic.
+
+The chosen design enumerates the library-supported accessors directly and requires explicit opt-in (via ADL hook or trait override) for any user accessor whose const version is not a standard-library one.
 
 ### `basic_common_reference` specializations in `<atomic>`
 
