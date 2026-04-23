@@ -62,7 +62,7 @@ __host__ __device__ void scenario1b_aligned_accessor()
 }
 
 // --------------------------------------------------------------------------
-// Scenario 2 — custom accessor, author opts in via ADL tag_invoke hook.
+// Scenario 2 — custom accessor, author opts in via ADL-found const_view.
 // --------------------------------------------------------------------------
 
 namespace user_lib {
@@ -88,9 +88,11 @@ struct atomic_accessor {
 };
 
 // Author-provided ADL hook. Found via ADL on atomic_accessor<T>.
+// Author-provided ADL hook: a free function named `const_view` in the
+// accessor's own namespace. cuda::std::const_view finds it via ADL.
 template <class T>
 _CCCL_API constexpr atomic_accessor<const T>
-tag_invoke(::cuda::std::__const_view_impl::const_view_fn_tag, atomic_accessor<T>) noexcept
+const_view(atomic_accessor<T>) noexcept
 {
   return {};
 }
@@ -120,8 +122,9 @@ __host__ __device__ void scenario2_adl_hook()
 
 // --------------------------------------------------------------------------
 // Scenario 3 — third-party accessor the consumer cannot modify.
-// The vendor did not provide a tag_invoke hook; the consumer wraps the
-// vendor accessor in a local adapter and puts the ADL hook on the adapter.
+// The vendor did not provide a `const_view` ADL hook; the consumer wraps
+// the vendor accessor in a local adapter and puts the ADL hook on the
+// adapter.
 // --------------------------------------------------------------------------
 
 namespace vendor {
@@ -146,8 +149,8 @@ struct gpu_accessor {
   offset(data_handle_type __p, cuda::std::size_t __i) const noexcept { return __p + __i; }
 };
 
-// Vendor provides no tag_invoke hook. The consumer cannot modify this
-// namespace.
+// Vendor provides no `const_view` ADL hook. The consumer cannot modify
+// this namespace.
 
 } // namespace vendor
 
@@ -180,7 +183,7 @@ struct gpu_adapter {
 
 template <class T>
 _CCCL_API constexpr gpu_adapter<const T>
-tag_invoke(::cuda::std::__const_view_impl::const_view_fn_tag, gpu_adapter<T>) noexcept
+const_view(gpu_adapter<T>) noexcept
 {
   return {};
 }

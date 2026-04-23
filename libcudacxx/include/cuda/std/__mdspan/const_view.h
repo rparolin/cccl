@@ -37,14 +37,16 @@ _CCCL_BEGIN_NAMESPACE_CUDA_STD
 namespace __const_view_impl
 {
 
-// ADL dispatch tag. Users' hooks look like:
-//   tag_invoke(cuda::std::__const_view_impl::const_view_fn_tag{}, MyAccessor<T>)
-struct const_view_fn_tag
-{};
+// ADL poison: ensures that unqualified `const_view(a)` inside the CPO's
+// operator() does not find the CPO object itself (cuda::std::const_view) —
+// it finds user-supplied free functions via ADL instead.
+//
+// Users customize by providing a `const_view(MyAccessor)` free function in
+// their own namespace; ordinary ADL from the CPO's body reaches it.
+void const_view() = delete;
 
 template <class _A>
-_CCCL_CONCEPT __has_adl_hook =
-  _CCCL_REQUIRES_EXPR((_A), _A __a)(tag_invoke(const_view_fn_tag{}, __a));
+_CCCL_CONCEPT __has_adl_hook = _CCCL_REQUIRES_EXPR((_A), _A __a)(const_view(__a));
 
 template <class _A>
 _CCCL_CONCEPT __is_default_accessor_like =
@@ -64,14 +66,14 @@ _CCCL_CONCEPT __is_aligned_accessor_like = __is_aligned_accessor_of<_A>::value;
 
 struct const_view_fn
 {
-  // Path 1: ADL tag_invoke hook.
+  // Path 1: ADL-found `const_view(A)` free function in the accessor's namespace.
   _CCCL_TEMPLATE(class _A)
   _CCCL_REQUIRES(__has_adl_hook<_A>)
   [[nodiscard]] _CCCL_API constexpr auto operator()(_A __a) const
-    noexcept(noexcept(tag_invoke(const_view_fn_tag{}, __a))) //
-    -> decltype(tag_invoke(const_view_fn_tag{}, __a))
+    noexcept(noexcept(const_view(__a))) //
+    -> decltype(const_view(__a))
   {
-    return tag_invoke(const_view_fn_tag{}, __a);
+    return const_view(__a);
   }
 
   // Path 2a: built-in for default_accessor.
