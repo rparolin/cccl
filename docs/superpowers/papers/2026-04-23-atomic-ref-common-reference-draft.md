@@ -1,0 +1,312 @@
+#  `basic_common_reference` specializations for `std::atomic_ref`
+
+| | |
+|---|---|
+| **Document #** | DNNNN (to be assigned) |
+| **Date** | 2026-04-23 |
+| **Reply-to** | Rob Parolin <rparolin@nvidia.com> |
+| **Audience** | SG1 |
+| **Target** | C++29 |
+| **Revision** | R0 (draft) |
+
+**Related papers / issues**:
+[P3323R1](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2024/p3323r1.html),
+[P3860R1](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p3860r1.html),
+[P2689R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2024/p2689r3.html),
+DNNNN ("Customization Point for a const view of `std::mdspan`", motivating consumer).
+
+---
+
+## Abstract
+
+`std::atomic_ref` does not interoperate with plain references through the `common_reference_with` machinery. In current C++26, *every* non-identity `common_reference_with` query involving `atomic_ref` against `T&`, `const T&`, `atomic_ref<T>`, or `atomic_ref<const T>` — same-const and cross-const alike — evaluates to `false`.
+
+This paper proposes six `basic_common_reference` partial specializations in `<atomic>` that close the full gap. The resolved common type is `atomic_ref<T>` when both operands are at the same non-const element type, and `atomic_ref<const T>` otherwise. The design preserves proxy semantics across the common-reference relation: when either operand is an atomic reference, the common reference is also an atomic reference, at the stricter of the two const-qualifications.
+
+This work was previously bundled into a companion paper proposing an mdspan customization point object for const views. It is split here because the `common_reference_with` gap bites independently outside mdspan, the audience (SG1 / atomics) differs from the mdspan paper's audience (LEWG / mdspan), and the fix has no technical dependency on the mdspan design.
+
+---
+
+## Motivation
+
+### The gap in the current standard
+
+C++26 shipped `std::atomic_ref<const T>` via P3323R1 and added the converting constructor between `atomic_ref<T>` and `atomic_ref<const T>` via P3860R1. Neither paper added a `basic_common_reference` specialization for `atomic_ref`. As of this paper's writing, the C++ working draft at `[atomics.ref.generic]` and adjacent subclauses contains **no** such specialization.
+
+Consequently, every non-identity `common_reference_with` query across `atomic_ref` and references to its element type evaluates to `false`:
+
+```cpp
+// All of these fail in current C++26:
+
+static_assert(std::common_reference_with<std::atomic_ref<T>,       T&>);                     // fails
+static_assert(std::common_reference_with<std::atomic_ref<const T>, const T&>);               // fails
+static_assert(std::common_reference_with<std::atomic_ref<T>,       const T&>);               // fails
+static_assert(std::common_reference_with<std::atomic_ref<const T>, T&>);                     // fails
+static_assert(std::common_reference_with<std::atomic_ref<T>,       std::atomic_ref<const T>>); // fails
+```
+
+`common_reference_with<atomic_ref<T>, atomic_ref<T>>` succeeds trivially through the identity-type path in `common_reference_t`; same-type pairs are not part of the gap.
+
+The gap blocks every facility that probes `common_reference_with` across an atomic reference and a plain reference to the same element type, regardless of whether the const-qualifications match. This is not an edge case: it is the situation that arises whenever a user holds mutable and read-only views of the same atomically-accessed data, or composes a range adaptor over `atomic_ref`-producing iterators with generic algorithms.
+
+### Why this matters
+
+The gap is visible in three classes of code.
+
+**1. Range adaptors over atomic buffers.** A user with a `span<T>` wrapped by a proxy iterator that yields `atomic_ref<T>` cannot pass the range (or a const version of it) into standard algorithms that check iterator reference compatibility. `indirectly_readable`, `indirectly_writable`, and `indirectly_copyable` each probe `common_reference_with` through `iter_common_reference_t`. The mismatch reports as a concept failure deep inside the algorithm's constraint, not at the user's call site.
+
+**2. Generic algorithms that accept two reference types.** An algorithm template whose signature takes two references and requires them to share a common reference fails to instantiate when one side is an atomic proxy — even when the user's intent is a benign read-against-write comparison at matching element types.
+
+**3. User algorithms that reason about reference compatibility explicitly.** User code that spells `common_reference_with<R1, R2>` for its own precondition check — for example, to dispatch between an atomic and a non-atomic fast path — will route atomic-ref inputs into the slow path, even when the operation is well-defined.
+
+In each class, the gap manifests the same way: a concept that "should be true" is `false`, and the code path behind it is unreachable without awkward workarounds.
+
+### The motivating consumer
+
+A companion paper (DNNNN, *Customization Point for a const view of `std::mdspan`*) needs these specializations to make `std::atomic_ref`-backed mdspan accessors usable end-to-end. An accessor whose const counterpart produces an mdspan over `atomic_ref<const T>` cannot be used with the non-const original in any algorithm that asks `common_reference_with`. That paper is a consumer of this one; this paper stands alone and is not gated on the mdspan work.
+
+### Why split from the mdspan paper
+
+The split was identified as a live option in the bundled draft's "Coordination with P2689R3" section. Independent review reinforced it:
+
+- **Different audience.** The mdspan customization point object is an LEWG question about mdspan's customization surface. The `basic_common_reference` work is an SG1 question about atomics. Bundling pushes one audience to review material outside its expertise.
+- **Independent value.** The gap harms non-mdspan code (section above). Users blocked today do not benefit from a paper that stalls on unrelated mdspan review.
+- **No technical dependency.** The specializations here are self-contained; the mdspan paper references them but does not require them to be in the same document.
+
+---
+
+## Proposal
+
+Add six `basic_common_reference` partial specializations to `<atomic>`. Together they cover the full matrix of non-identity pairs.
+
+```cpp
+// Pair 1: atomic_ref<T> against (possibly const-qualified) reference to T.
+// Resolves to atomic_ref<T> for same-const, atomic_ref<const T> for cross-const.
+
+template <class T, template<class> class TQ, template<class> class UQ>
+struct basic_common_reference<atomic_ref<T>, T, TQ, UQ> {
+  using type = atomic_ref<
+    conditional_t<is_const_v<remove_reference_t<UQ<T>>>, const T, T>>;
+};
+
+template <class T, template<class> class TQ, template<class> class UQ>
+struct basic_common_reference<T, atomic_ref<T>, TQ, UQ> {
+  using type = atomic_ref<
+    conditional_t<is_const_v<remove_reference_t<TQ<T>>>, const T, T>>;
+};
+
+// Pair 2: atomic_ref<const T> against (possibly const-qualified) reference to T.
+// Resolves to atomic_ref<const T> unconditionally — either operand's const-ness suffices.
+
+template <class T, template<class> class TQ, template<class> class UQ>
+struct basic_common_reference<atomic_ref<const T>, T, TQ, UQ> {
+  using type = atomic_ref<const T>;
+};
+
+template <class T, template<class> class TQ, template<class> class UQ>
+struct basic_common_reference<T, atomic_ref<const T>, TQ, UQ> {
+  using type = atomic_ref<const T>;
+};
+
+// Pair 3: atomic_ref<T> against atomic_ref<const T>.
+// Resolves to atomic_ref<const T> — the stricter of the two proxies.
+
+template <class T, template<class> class TQ, template<class> class UQ>
+struct basic_common_reference<atomic_ref<T>, atomic_ref<const T>, TQ, UQ> {
+  using type = atomic_ref<const T>;
+};
+
+template <class T, template<class> class TQ, template<class> class UQ>
+struct basic_common_reference<atomic_ref<const T>, atomic_ref<T>, TQ, UQ> {
+  using type = atomic_ref<const T>;
+};
+```
+
+**Mandates.** The following Mandates applies to each of the six partial specializations: `T` meets the requirements in `[atomics.ref.generic]` for `atomic_ref<T>` to be a valid specialization. Cross-referencing `[atomics.ref.generic]` rather than duplicating the condition keeps the Mandates aligned if that subclause evolves.
+
+**Partial ordering.** The six specializations key on disjoint template-ID patterns in their first two arguments: `(atomic_ref<T>, T)`, `(T, atomic_ref<T>)`, `(atomic_ref<const T>, T)`, `(T, atomic_ref<const T>)`, `(atomic_ref<T>, atomic_ref<const T>)`, and `(atomic_ref<const T>, atomic_ref<T>)`. No two patterns overlap for any instantiation. Each is unambiguously more specialized than the primary `basic_common_reference` template. The identity case (`atomic_ref<T>` against itself) is handled by `common_type_t` through `common_reference_t`'s ordinary cascade and does not require a specialization here.
+
+### Why this coverage, not cross-const only
+
+An earlier iteration of this work covered only the cross-const pairs, under the mistaken premise that C++26 already supplied the same-const case. It does not: `common_reference_with<atomic_ref<T>, T&>` fails today. Proposing only cross-const specializations would leave the same-const gap unfixed — a strictly worse outcome. Covering the full matrix in one paper is both smaller to review and cleaner to reason about than two sequential papers, because a later same-const paper would be bound by whichever common-type convention this one picked.
+
+---
+
+## Design rationale
+
+### Why `atomic_ref` (not a plain reference) as the common type
+
+Both choices — `atomic_ref<T>` / `atomic_ref<const T>` vs. `T&` / `const T&` — close the concept-level gap. Both operands are convertible to either candidate common type. The choice is about what downstream generic code sees.
+
+Reasons to prefer the proxy:
+
+1. **Preserves atomic-access semantics in generic code.** A generic algorithm that computed the common reference and then read through it would, under a plain-reference common type, be reading through a non-atomic reference — losing the atomicity the user supplied `atomic_ref` to obtain. Proxy-as-common-type keeps atomic access visible through the common-reference relation.
+
+2. **Uniform proxy rule.** Across all five non-identity pairs, the rule is *"if any operand is an atomic reference, the common reference is an atomic reference at the stricter const-qualification."* One rule, easy to teach, easy for tools to pattern-match on. A plain-reference rule would fragment: sometimes proxy, sometimes plain, depending on pair shape.
+
+3. **Downstream dispatch.** Facilities that dispatch between atomic and non-atomic code paths by matching on the reference type see a uniform signal: the presence of `atomic_ref` in the common reference indicates the atomic path is valid. A plain-reference common type silently erases that signal.
+
+*Note:* a plain-reference (`const T&` / `T&`) common type remains a coherent alternative. It is rejected on the grounds above, not on soundness. Readers comparing designs should be aware that preferring plain references here would require the same convention across every pair — same-const and cross-const — and would change the user-visible rule from "the common reference is a proxy when any operand is a proxy" to "the common reference is a plain reference when any operand is a plain reference." This paper takes the proxy-preservation branch.
+
+### Why in `<atomic>`, not a separate proxy-reference utility
+
+A generic "proxy-reference common-reference" utility that third-party proxy types could opt into was considered and rejected. The common-type choice is naturally type-specific: what is right for `atomic_ref` pairs may differ from what is right for `vector<bool>::reference` pairs, or for user-defined GPU-memory references. Forcing uniformity across proxy kinds would overfit all of them. Placing the specializations in `<atomic>` co-locates them with the type they serve, and keeps each proxy type's common-reference policy independently decidable.
+
+### Scope notes — what this paper does not touch
+
+- **`std::vector<bool>::reference`** has analogous cross-const gaps against `bool&` and `const bool&`. Those gaps are real but are entangled with open questions about the design of `std::vector<bool>` itself (the proxy returns `bool` by value, not by reference, which creates additional binding concerns with `common_reference_with`). This paper does not address them. A future paper may take them up following the pattern here.
+- **`std::pair<T, U>` cross-const** and the adjacent cases in tuple-like types are outside scope. They concern `common_reference` behaviour for composite types, not for individual proxy references.
+- **User-defined proxy references** (GPU-memory references, distributed-memory references, custom lock-free wrappers) are their authors' responsibility to specialize. The pattern in this paper — six specializations, proxy as the common type at the stricter const-qualification — is the template to follow.
+
+---
+
+## Alternatives considered
+
+### Resolve to `const T&` / `T&` instead of `atomic_ref<...>`
+
+Addressed above. Rejected on atomicity-preservation and uniform-rule grounds; not on soundness.
+
+### Cover only cross-const pairs
+
+Addressed above. Rejected because the same-const gap is equally broken today, equally user-visible, and a subsequent same-const paper would be bound by the common-type convention picked here. Shipping both together is smaller, clearer, and avoids two-paper coordination cost on what is fundamentally a single design question.
+
+### Ship as an LWG issue against `[atomics.ref.generic]`
+
+The change is well-scoped enough that an LWG issue looked plausible. Rejected: the design question ("what is the common type when one operand is a proxy") requires SG1 review, not wording polish. LWG is the wrong forum to settle that question, and an issue resolution cannot substitute for design-group input.
+
+### Wait for P2689R3 to carry the wording
+
+P2689R3 proposes `basic_atomic_accessor` for mdspan and is a natural collaborator. Deferring the `basic_common_reference` work to a later revision of P2689 was rejected because P2689R3's scope is accessors, not the cross-reference-type relation on `atomic_ref` itself. The specializations here belong in `<atomic>` regardless of whether P2689R3 ships, and the non-mdspan motivations are independent. *See Coordination with P2689R3 below.*
+
+---
+
+## Impact on existing code
+
+No valid program that compiles today becomes ill-formed. The proposed specializations only add `true` where `common_reference_with` previously evaluated to `false` for the affected pairs; no case currently evaluating to `true` changes.
+
+A program that relies on one of the affected `common_reference_with` queries being `false` — for example, an SFINAE predicate that specifically selects an overload when the concept fails for `(atomic_ref<T>, T&)` — would observe a behaviour change. This is the same class of observable change that any `common_reference_with` extension produces. The gap has been reported as a defect rather than exploited as a feature, and the authors are not aware of code relying on it.
+
+A program that has written its own namespace-scope `basic_common_reference` specialization for one of the six template-ID patterns addressed here would become ambiguous or ill-formed once the standard specializations land. Template-ID patterns involving a standard-library template name are not reserved to the standard library, so this is technically possible; we are not aware of it occurring in practice.
+
+---
+
+## Implementation experience
+
+A libcudacxx-based design-demonstration is implemented on the CCCL branch `feature/mdspan-const-accessor-cp-design`. The prototype exercises the proposed specializations against a minimal `fake_atomic_ref<T>` proxy type that mimics the C++26 `atomic_ref` shape (converting constructor from `atomic_ref<T>` to `atomic_ref<const T>`, construction from `T&` and `const T&`). With the six specializations in place, all affected `common_reference_with` checks succeed; without them, the checks fail as they do against the standard library today.
+
+The atomic-side change is intentionally small: six partial specializations, a Mandates cross-reference, a feature-test macro, and a stable-name subclause. No changes to `atomic_ref`'s class definition or operations are needed. The heavier implementation experience lives in the companion mdspan paper's customization point object; that paper references this one as the piece that closes the concept-level gap.
+
+The prototype is host-only for the specialized proxy type. On libcudacxx, the production `atomic_ref` is available in both host and device code; the specializations are expected to compile identically in both.
+
+---
+
+## Wording
+
+*Wording in R0 is approximate. It reflects design intent and the structural shape of the change; it is not LWG-quality. Final revision will include LWG-polished diffs against the latest working draft for `[atomics.syn]` and the new `[atomics.ref.common_reference]` subclause.*
+
+### Synopsis diff for `<atomic>`
+
+Add to the `<atomic>` synopsis (`[atomics.syn]`), in `namespace std`:
+
+```cpp
+// [atomics.ref.common_reference], common_reference specializations for atomic_ref
+
+template <class T, template<class> class TQ, template<class> class UQ>
+struct basic_common_reference<atomic_ref<T>, T, TQ, UQ>;
+template <class T, template<class> class TQ, template<class> class UQ>
+struct basic_common_reference<T, atomic_ref<T>, TQ, UQ>;
+
+template <class T, template<class> class TQ, template<class> class UQ>
+struct basic_common_reference<atomic_ref<const T>, T, TQ, UQ>;
+template <class T, template<class> class TQ, template<class> class UQ>
+struct basic_common_reference<T, atomic_ref<const T>, TQ, UQ>;
+
+template <class T, template<class> class TQ, template<class> class UQ>
+struct basic_common_reference<atomic_ref<T>, atomic_ref<const T>, TQ, UQ>;
+template <class T, template<class> class TQ, template<class> class UQ>
+struct basic_common_reference<atomic_ref<const T>, atomic_ref<T>, TQ, UQ>;
+```
+
+### New subclause `[atomics.ref.common_reference]`
+
+Proposed stable name: **`[atomics.ref.common_reference]`**, placed immediately after `[atomics.ref.generic]`.
+
+Proposed content (approximate; LWG to polish):
+
+> **`[atomics.ref.common_reference]` — *`basic_common_reference` specializations for `atomic_ref`***
+>
+> The partial specializations of `basic_common_reference` ([meta.trans.other]) declared in this subclause provide a common reference type for pairs of `atomic_ref` against (possibly const-qualified) reference-to-`T`, and for pairs of `atomic_ref` at differing const-qualifications.
+>
+> *Mandates (for each specialization):* `T` meets the requirements in `[atomics.ref.generic]` for `atomic_ref<T>` to be a valid specialization.
+>
+> For `basic_common_reference<atomic_ref<T>, T, TQual, UQual>`:
+> `using type = atomic_ref<conditional_t<is_const_v<remove_reference_t<UQual<T>>>, const T, T>>;`
+>
+> For the symmetric `basic_common_reference<T, atomic_ref<T>, TQual, UQual>`:
+> `using type = atomic_ref<conditional_t<is_const_v<remove_reference_t<TQual<T>>>, const T, T>>;`
+>
+> For all other specializations in this subclause:
+> `using type = atomic_ref<const T>;`
+
+### Feature-test macro
+
+Add to `<version>` and `<atomic>`:
+
+```cpp
+#define __cpp_lib_atomic_ref_common_reference  20XXYYL
+```
+
+and a row to `[support.limits.general]`:
+
+| Macro name | Value | Header(s) |
+|---|---|---|
+| `__cpp_lib_atomic_ref_common_reference` | `20XXYYL` | `<atomic>` |
+
+The placeholder value is editor-assigned at the meeting that approves this paper. Guards compile-time availability of the six specializations so portable code can `#ifdef` on the macro.
+
+### What is *not* changing
+
+- No changes to `atomic_ref<T>` or `atomic_ref<const T>` class definitions or operations (`[atomics.ref.operations]`).
+- No modifications to any existing `basic_common_reference` specialization — none exist today for `atomic_ref`.
+
+---
+
+## Coordination with P2689R3
+
+P2689R3 ("Atomic Refs Bound to Memory Orderings & Atomic Accessors") proposes `basic_atomic_accessor<T, MemOrder>` for mdspan. Its authors are natural collaborators: the `basic_common_reference` specializations proposed here are exactly what makes their accessor usable in read-only form alongside the non-const original.
+
+Two coordination options:
+
+1. **Cross-reference.** This paper carries the `<atomic>` wording; P2689Rn cites it and assumes the six specializations are in place for its use of `atomic_ref` via `basic_atomic_accessor`. Neither paper duplicates the other.
+2. **Merge.** The `<atomic>` additions fold into a later revision of P2689. Feasible if scope timing aligns; the six specializations are small enough to embed.
+
+Given that this paper targets SG1 directly while P2689R3 targets LEWG with an SG1 touch, option (1) minimizes committee-routing friction. Authors of P2689R3 are invited to review and comment.
+
+---
+
+## Known gaps / TODO for R1
+
+- **SG1 coordination.** Confirm the common-type choice (`atomic_ref` at the stricter const-qualification) and the coordination option (cross-reference vs. merge) with the authors of P2689R3 before R1.
+- **LWG wording polish.** The partial-specialization spellings, Mandates phrasing, synopsis-diff form, and per-specialization `type` statements are approximate. A wording specialist should finalize these before LEWG/LWG review.
+- **Feature-test macro value.** Editor-assigned.
+- **Interaction with future `vector<bool>` / `pair` cross-const work.** Declared out of scope. If SG1 wants a uniform framing across proxy types, it belongs in a separate paper rather than an R1 expansion here.
+
+---
+
+## References
+
+- **P3323R1** — *cv-qualified types in atomic and atomic_ref*. Added `atomic_ref<const T>` in C++26. Verified on 2026-04-23 against the published text: the paper modifies `atomic_ref`'s class template constraints but does not add any `basic_common_reference` specialization. <https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2024/p3323r1.html>
+- **P3860R1** — *`atomic_ref<T>` is not convertible to `atomic_ref<const T>`*. Adds the converting constructor; prerequisite for `atomic_ref<const T>` being reachable from `atomic_ref<T>`. Verified: also does not add a `basic_common_reference` specialization. <https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p3860r1.html>
+- **P2689R3** — *Atomic Refs Bound to Memory Orderings & Atomic Accessors*. Natural collaborator. <https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2024/p2689r3.html>
+- **DNNNN** — *Customization Point for a const view of `std::mdspan`*. Motivating consumer of the specializations proposed here. (Companion paper, same author, same submission cycle.)
+- **`[atomics.ref.generic]`**, **`[atomics.ref.operations]`**, **`[meta.trans.other]`**, **`[support.limits.general]`**, **`[atomics.syn]`** — C++ working draft.
+
+---
+
+## Acknowledgements
+
+To be completed in R1 after review (SG1 reviewers, P2689R3 coordinators, CCCL contributors).
+
+---
+
+*This paper is split from the companion customization-point paper (DNNNN, 2026-04-18 draft). The design notes underlying the split live in the CCCL repository at `docs/superpowers/papers/2026-04-18-mdspan-const-accessor-cp-draft.md`.*
