@@ -174,76 +174,6 @@ The prototype is host-only for the specialized proxy type. On libcudacxx, the pr
 
 ---
 
-## Wording
-
-*Wording in R0 is approximate — design intent and structural shape, not LWG-quality. R1 will include polished diffs for `[atomics.syn]` and the new `[atomics.ref.common_reference]` subclause.*
-
-### Synopsis diff for `<atomic>`
-
-Add to the `<atomic>` synopsis (`[atomics.syn]`), in `namespace std`:
-
-```cpp
-// [atomics.ref.common_reference], common_reference specializations for atomic_ref
-
-template <class T, template<class> class TQ, template<class> class UQ>
-struct basic_common_reference<atomic_ref<T>, T, TQ, UQ>;
-template <class T, template<class> class TQ, template<class> class UQ>
-struct basic_common_reference<T, atomic_ref<T>, TQ, UQ>;
-
-template <class T, template<class> class TQ, template<class> class UQ>
-struct basic_common_reference<atomic_ref<const T>, T, TQ, UQ>;
-template <class T, template<class> class TQ, template<class> class UQ>
-struct basic_common_reference<T, atomic_ref<const T>, TQ, UQ>;
-
-template <class T, template<class> class TQ, template<class> class UQ>
-struct basic_common_reference<atomic_ref<T>, atomic_ref<const T>, TQ, UQ>;
-template <class T, template<class> class TQ, template<class> class UQ>
-struct basic_common_reference<atomic_ref<const T>, atomic_ref<T>, TQ, UQ>;
-```
-
-### New subclause `[atomics.ref.common_reference]`
-
-Proposed stable name: **`[atomics.ref.common_reference]`**, placed immediately after `[atomics.ref.generic]`.
-
-Proposed content (approximate; LWG to polish):
-
-> **`[atomics.ref.common_reference]` — *`basic_common_reference` specializations for `atomic_ref`***
->
-> The partial specializations of `basic_common_reference` ([meta.trans.other]) declared in this subclause provide a common reference type for pairs of `atomic_ref` against (possibly const-qualified) reference-to-`T`, and for pairs of `atomic_ref` at differing const-qualifications.
->
-> *Mandates (for each specialization):* `T` meets the requirements in `[atomics.ref.generic]` for `atomic_ref<T>` to be a valid specialization.
->
-> For `basic_common_reference<atomic_ref<T>, T, TQual, UQual>`:
-> `using type = atomic_ref<conditional_t<is_const_v<remove_reference_t<UQual<T>>>, const T, T>>;`
->
-> For the symmetric specialization (`basic_common_reference<T, atomic_ref<T>, TQual, UQual>`), the `type` is defined analogously, inspecting `TQual<T>` in place of `UQual<T>`.
->
-> For all other specializations in this subclause:
-> `using type = atomic_ref<const T>;`
-
-### Feature-test macro
-
-Add to `<version>` and `<atomic>`:
-
-```cpp
-#define __cpp_lib_atomic_ref_common_reference  20XXYYL
-```
-
-and a row to `[support.limits.general]`:
-
-| Macro name | Value | Header(s) |
-|---|---|---|
-| `__cpp_lib_atomic_ref_common_reference` | `20XXYYL` | `<atomic>` |
-
-The placeholder value is editor-assigned at the meeting that approves this paper.
-
-### What is *not* changing
-
-- No changes to `atomic_ref<T>` or `atomic_ref<const T>` class definitions or operations (`[atomics.ref.operations]`).
-- No modifications to any existing `basic_common_reference` specialization — none exist today for `atomic_ref`.
-
----
-
 ## Coordination with P2689R3
 
 P2689R3 ("Atomic Refs Bound to Memory Orderings & Atomic Accessors") proposes `basic_atomic_accessor<T, MemOrder>` for mdspan. Its authors are natural collaborators: these specializations are what `basic_atomic_accessor` needs for read-only composition alongside the non-const original.
@@ -260,8 +190,7 @@ Option (1) minimizes committee-routing friction because this paper targets SG1 d
 ## Known gaps / TODO for R1
 
 - **SG1 coordination.** Confirm the common-type choice (`atomic_ref` at the stricter const-qualification) and the coordination option (cross-reference vs. merge) with the authors of P2689R3 before R1.
-- **LWG wording polish.** The partial-specialization spellings, Mandates phrasing, synopsis-diff form, and per-specialization `type` statements are approximate. A wording specialist should finalize these before LEWG/LWG review.
-- **Feature-test macro value.** Editor-assigned.
+- **Standardese wording.** R0 describes the design; normative wording (synopsis diff, `[atomics.ref.common_reference]` subclause, Mandates phrasing, feature-test macro) is deferred to a later revision.
 - **Interaction with future `vector<bool>` / `pair` cross-const work.** Declared out of scope. If SG1 wants a uniform framing across proxy types, it belongs in a separate paper rather than an R1 expansion here.
 
 ---
