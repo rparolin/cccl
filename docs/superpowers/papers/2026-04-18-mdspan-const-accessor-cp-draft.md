@@ -21,7 +21,7 @@
 
 `std::mdspan<T, …, Accessor>` has no standard mechanism for producing a read-only view of the same data with `const T` as its element type. This paper proposes:
 
-1. A **customization point object** `std::const_view` in `<mdspan>`. Called with an mdspan, it returns an mdspan whose element type is `const T` over the same data. Called with an accessor, it returns the accessor's const counterpart. Users customize it for their own accessors by writing a free function named `const_view` in the accessor's own namespace; `std::const_view` finds it through argument-dependent lookup — the same niebloid pattern used by `std::ranges::begin` and other modern standard-library customization points.
+1. A **customization point object** `std::const_view` in `<mdspan>`. Called with an mdspan, it returns an mdspan whose element type is `const T` over the same data. Called with an accessor, it returns the accessor's const counterpart. Users customize it by writing a free function `const_view` in the accessor's own namespace, found via ADL — the niebloid pattern used by `std::ranges::begin`.
 2. Library-provided handling for `std::default_accessor` and `std::aligned_accessor` through direct overloads inside the CPO. No new members are added to these accessors.
 3. The `<atomic>`-side work needed to make the motivating `atomic_ref` case compose end-to-end — `basic_common_reference` specializations for `std::atomic_ref` — is split into a companion paper (`2026-04-23-atomic-ref-common-reference-draft.md`, SG1 audience). This paper cross-references that work but does not propose it.
 
@@ -67,11 +67,9 @@ For an accessor `A` with `element_type = T`, the **const version** `C` (produced
 2. `C::reference` is the access type through which an element of type `C::element_type` is accessed, in the same sense that `A::reference` is the access type for `A::element_type`. For language-reference accessors this means `C::reference` is `const T&`; for proxy-reference accessors it is the corresponding proxy over `const T` (e.g. `atomic_ref<T>` → `atomic_ref<const T>`). Because `C::element_type` is const-qualified, no operation on a value of type `C::reference` modifies the accessed element.
 3. `C::data_handle_type` is constructible from `A::data_handle_type`. For the standard accessors this is automatic (both use `T*`, and `const T*` is constructible from `T*`); custom accessors with fancy pointer types — device pointers, tagged pointers, pointers carrying memory-space information — must provide the analogous conversion.
 4. An mdspan with accessor `C` views the same elements as the original mdspan with accessor `A`.
-5. `C::offset_policy` is itself a const version of `A::offset_policy`, so that `std::submdspan(std::const_view(md), …)` and `std::const_view(std::submdspan(md, …))` yield type-equivalent mdspans. In particular, for any accessor whose `offset_policy` is the accessor itself (`default_accessor`, `aligned_accessor`, and most user accessors), this reduces to the self-referential case and is automatic.
+5. `C::offset_policy` is itself a const version of `A::offset_policy`, so that `std::submdspan(std::const_view(md), …)` and `std::const_view(std::submdspan(md, …))` yield type-equivalent mdspans.
 
 A `const_view` is a read-only alias of the source's storage, not a snapshot. Reads through the view observe the current value in storage at the time of each read; modifications to the underlying data through the original view, through another accessor, or — for synchronizing proxy references such as `atomic_ref` — through concurrent writes, are visible through subsequent reads. `const_view` imposes no ordering, atomicity, or freshness guarantees beyond those already provided by the source accessor's `reference` type.
-
-This is `const` as C++ already defines it.
 
 ### The `const_view` customization point object
 
@@ -88,7 +86,7 @@ namespace std {
 
 #### Customization paths
 
-Customization is through two mechanisms, consulted in priority order:
+Customization is through two mechanisms:
 
 **1. Author-facing: ADL-found `const_view` free function.** An accessor author provides a free function literally named `const_view` in their own namespace; `std::const_view` finds it via argument-dependent lookup:
 
@@ -190,7 +188,7 @@ constexpr auto const_view_fn::operator()(const mdspan<T, E, L, A>& md) const
 }
 ```
 
-The constraint `requires { const_view(a); }` ensures the `mdspan` overload is only viable when the accessor has a resolvable const counterpart; otherwise the entire call is ill-formed, consistent with the accessor-level diagnostic.
+The constraint ensures the `mdspan` overload is viable only when the accessor has a resolvable const counterpart.
 
 ### How users obtain a const view
 
@@ -203,17 +201,13 @@ mdspan<double, E> md = /* ... */;
 mdspan<const double, E> ro = md;   // no cast, no CPO, no ceremony
 ```
 
-This is the preferred mechanism when the target type is convenient to write.
-
-**2. `std::const_view` CPO.** When the user either cannot conveniently spell the target type (for custom accessors with nontrivial template parameters) or wants to make the const-ification explicit at the call site, the CPO is the right tool. The target type is deduced:
+**2. `std::const_view` CPO.** When the user cannot conveniently spell the target type (for custom accessors with nontrivial template parameters) or wants to make the const-ification explicit at the call site, the CPO is the right tool. The target type is deduced:
 
 ```cpp
 mdspan<double, E, L, my_accessor<double>> md = /* ... */;
 auto ro = std::const_view(md);
 // decltype(ro) is mdspan<const double, E, L, my_accessor<const double>>
 ```
-
-The same CPO also works on an accessor directly (`std::const_view(md.accessor())`); the mdspan overload calls into the accessor overload internally.
 
 ### Handling of standard accessors
 
@@ -222,7 +216,7 @@ No changes are proposed to `std::default_accessor` or `std::aligned_accessor` th
 - `std::default_accessor<T>` → `std::default_accessor<const T>`
 - `std::aligned_accessor<T, N>` → `std::aligned_accessor<const T, N>`
 
-Both accessors already provide implicit converting constructors between the non-const and const instantiations in C++26, so the overload bodies are trivial (the result is default-constructible and compatible with the source via the existing converting constructor).
+Both accessors already provide implicit converting constructors between the non-const and const instantiations in C++26; the overload bodies return a default-constructed const instantiation.
 
 ### `basic_common_reference` specializations (split into a companion paper)
 
@@ -278,15 +272,13 @@ Reusing the name would mislead readers who know the ranges version. They would e
 
 **`std::view_as_const`** — maximally explicit and avoids all collisions, but uses a verb-noun-qualifier word order that no existing standard-library name follows. Would be a novel naming without an established pattern to cite; the burden of justifying it would distract from the design.
 
-**`std::const_view`** (selected) — uses the standard's established `const_X` vocabulary (`const_iterator`, `const_reference`, `const_pointer`, `const_iterator_t`, `const_range_reference_t`). No collision with `std::ranges::as_const_view` or with `std::views::as_const`. Does not carry the owning-factory connotation of `std::make_*`. No shallow-const confusion. The one mild concern — that `const_X` identifiers in the standard are usually types, not function objects — is cushioned by the fact that no existing standard identifier is `std::const_view` at the top level, so no competing reader expectation exists to fight.
+**`std::const_view`** (selected) — uses the standard's established `const_X` vocabulary (`const_iterator`, `const_reference`, `const_pointer`, `const_iterator_t`, `const_range_reference_t`). No collision with `std::ranges::as_const_view` or `std::views::as_const`. Does not carry the owning-factory connotation of `std::make_*`. No shallow-const confusion.
 
 ---
 
 ## Coordination with P2689R3
 
-P2689R3 ("Atomic Refs Bound to Memory Orderings & Atomic Accessors", Edwards, Maher, Hoemmen) is actively proposing `basic_atomic_accessor<T, MemOrder>` for use with mdspan. Direct coordination on the `basic_common_reference` specializations now happens in the companion paper (`2026-04-23-atomic-ref-common-reference-draft.md`), which is the piece that makes an atomic-accessor-backed mdspan usable in read-only form alongside the non-const original.
-
-For this mdspan paper, the relevant interaction with P2689R3 is narrower: the `const_view` customization point proposed here applies to `basic_atomic_accessor` through the ADL-found `const_view` free function that P2689R3 (or a follow-up) is expected to provide for its accessor. No wording in this paper mentions `basic_atomic_accessor` directly.
+P2689R3 (Edwards, Maher, Hoemmen) proposes `basic_atomic_accessor<T, MemOrder>` for use with mdspan. The `const_view` customization point proposed here applies to it through the ADL-found `const_view` free function that P2689R3 or a follow-up is expected to provide; no wording in this paper mentions `basic_atomic_accessor` directly. Coordination on the `basic_common_reference` specializations lives in the companion SG1 paper.
 
 ---
 
@@ -297,7 +289,6 @@ A libcudacxx prototype of the CPO-based design is implemented on the CCCL fork (
 - `cuda::std::const_view` as a customization point object declared in `<cuda/std/mdspan>`, with direct overloads for `cuda::std::default_accessor` and `cuda::std::aligned_accessor`.
 - Author-side customization via ADL-found `const_view` free functions (niebloid pattern, matching `std::ranges::begin`). No `namespace std` specialization path; consumers of uncooperative third-party accessors wrap the vendor type in a local adapter.
 - No nested alias on the standard-library accessors.
-- No template-substitution fallback.
 
 The prototype validates that:
 
@@ -305,9 +296,7 @@ The prototype validates that:
 - `std::const_view(md)` is O(1) — no element copy, no allocation — and the result's `data_handle()` is the same address as the input's.
 - An accessor with no ADL hook produces a clean "no matching call" diagnostic at the call site (not a deep metaprogramming cascade).
 
-Implementation experience for the companion `basic_common_reference` work (`atomic_ref` specializations, demonstrated against a minimal `fake_atomic_ref` proxy) is reported in the companion paper `2026-04-23-atomic-ref-common-reference-draft.md`.
-
-The prototype's tests are organized as `.pass.cpp` / `.fail.cpp` under `libcudacxx/test/libcudacxx/std/containers/views/mdspan/const_view/`. All positive tests compile and run; both negative tests (`no_opt_in.fail.cpp`, `readonly.fail.cpp`) correctly fail to compile as intended.
+The prototype's tests are organized as `.pass.cpp` / `.fail.cpp` under `libcudacxx/test/libcudacxx/std/containers/views/mdspan/const_view/`. All positive tests compile and run; both negative tests (`no_opt_in.fail.cpp`, `readonly.fail.cpp`) correctly fail to compile as intended. Implementation experience for the companion `basic_common_reference` work is reported separately.
 
 ---
 
@@ -425,7 +414,7 @@ No changes are proposed to `[mdspan.accessor.default]` or `[mdspan.accessor.alig
 
 ### Open wording TODOs
 
-The following pieces need a real wording specialist before LEWG review:
+The following items need wording review before LEWG:
 
 1. **Poison-pill presentation.** The deleted declarations in Case 4 are scoped to the synthetic overload-resolution context, not the program. The exact phrasing matches current `[range.access.begin]` in intent, but should be cross-checked against the latest working-draft text for that subclause before R1.
 2. **Interaction with `submdspan`.** The `offset_policy` requirement in `[mdspan.const_view.general]` assumes `submdspan(const_view(md), …)` type-equals `const_view(submdspan(md, …))` for the library-provided accessors; a note or explicit statement in `[mdspan.sub]` may be desirable.
