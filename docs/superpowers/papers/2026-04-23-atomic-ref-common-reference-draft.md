@@ -41,7 +41,7 @@ static_assert(std::common_reference_with<std::atomic_ref<const T>, T&>);        
 static_assert(std::common_reference_with<std::atomic_ref<T>,       std::atomic_ref<const T>>); // fails
 ```
 
-`common_reference_with<atomic_ref<T>, atomic_ref<T>>` succeeds through the identity-type path; same-type pairs are not part of the gap.
+Each failure has the same root cause: with no `basic_common_reference` partial specialization matching the operand pair, the `common_reference_t` cascade falls through to the primary template (which defines no `type` member), so the type is undefined and `common_reference_with` evaluates to `false`. `common_reference_with<atomic_ref<T>, atomic_ref<T>>` succeeds through the identity-type path; same-type pairs are not part of the gap.
 
 ### Why this matters
 
@@ -110,7 +110,14 @@ struct basic_common_reference<atomic_ref<const T>, atomic_ref<T>, TQ, UQ> {
 
 **Mandates.** The following Mandates applies to each specialization: `T` meets the requirements in `[atomics.ref.generic]` for `atomic_ref<T>` to be a valid specialization.
 
-**Partial ordering.** The six specializations key on disjoint template-ID patterns in their first two arguments: `(atomic_ref<T>, T)`, `(T, atomic_ref<T>)`, `(atomic_ref<const T>, T)`, `(T, atomic_ref<const T>)`, `(atomic_ref<T>, atomic_ref<const T>)`, and `(atomic_ref<const T>, atomic_ref<T>)`. No two patterns overlap for any instantiation. Each is unambiguously more specialized than the primary `basic_common_reference` template.
+**Partial ordering.** Each specialization fixes a pattern in its first two type arguments while leaving `TQ` and `UQ` open. The six first-two-argument patterns — `(atomic_ref<T>, T)`, `(T, atomic_ref<T>)`, `(atomic_ref<const T>, T)`, `(T, atomic_ref<const T>)`, `(atomic_ref<T>, atomic_ref<const T>)`, `(atomic_ref<const T>, atomic_ref<T>)` — are pairwise deduction-disjoint: for any concrete operand pair, at most one pattern unifies, because the `T` appearing in the second argument must be the same template parameter as the `T` inside the first's `atomic_ref<…>`. Each specialization is unambiguously more specialized than the primary `basic_common_reference` template under `[temp.func.order]`.
+
+**How `TQ` and `UQ` are bound.** In a `common_reference_t<A, B>` query, the library peels `A` and `B` down to unqualified `T1` and `T2` and evaluates `basic_common_reference<T1, T2, TQ, UQ>::type`, where `TQ<X>` yields `X` re-qualified with the cv-ref qualifiers stripped from `A`, and `UQ<X>` similarly for `B`. Two worked examples:
+
+- `common_reference_t<atomic_ref<int>&, const int&>` binds `T1 = atomic_ref<int>`, `T2 = int`, `TQ<X> = X&`, `UQ<X> = const X&`. Pair 1 (first specialization) evaluates `UQ<int>` as `const int&`, `is_const_v<remove_reference_t<const int&>>` is `true`, so the result is `atomic_ref<const int>`.
+- `common_reference_t<atomic_ref<int>&&, int&>` binds `T1 = atomic_ref<int>`, `T2 = int`, `TQ<X> = X&&`, `UQ<X> = X&`. Pair 1 evaluates `UQ<int>` as `int&`, `is_const_v<remove_reference_t<int&>>` is `false`, so the result is `atomic_ref<int>`.
+
+Specializations 3–6 do not inspect `TQ`/`UQ`; their result is determined by the first two type arguments alone.
 
 ### Why this coverage, not cross-const only
 
@@ -160,7 +167,7 @@ No valid program that compiles today becomes ill-formed. The proposed specializa
 
 A program that relies on one of the affected `common_reference_with` queries being `false` — for example, an SFINAE predicate that specifically selects an overload when the concept fails for `(atomic_ref<T>, T&)` — would observe a behaviour change. This is the same class of observable change that any `common_reference_with` extension produces. The authors are not aware of code relying on the gap.
 
-A program that has written its own namespace-scope `basic_common_reference` specialization for one of the six template-ID patterns addressed here would become ambiguous or ill-formed once the standard specializations land. Template-ID patterns involving a standard-library template name are not reserved to the standard library, so this is technically possible; we are not aware of it occurring in practice.
+A user program that has written its own `basic_common_reference` specialization for one of the six template-ID patterns addressed here is already ill-formed no-diagnostic-required under `[namespace.std]`: `basic_common_reference` is a standard-library template, and user specializations must depend on at least one program-defined type, which `atomic_ref<T>` with a standard-library or built-in `T` is not. The proposed specializations therefore cannot break conforming code; they can only expose latent IFNDR programs.
 
 ---
 

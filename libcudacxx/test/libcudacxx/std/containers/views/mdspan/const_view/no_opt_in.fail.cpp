@@ -9,8 +9,8 @@
 
 // <mdspan>
 // cuda::std::const_view(md) must be ill-formed when the mdspan's accessor
-// has no ADL tag_invoke hook, no const_view_override specialization, and
-// is not one of the library-built-in accessors.
+// has no ADL-found `const_view` free function and is not one of the
+// library-built-in accessors (default_accessor, aligned_accessor).
 
 #include <cuda/std/mdspan>
 

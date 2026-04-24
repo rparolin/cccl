@@ -68,17 +68,17 @@ __host__ __device__ void scenario1b_aligned_accessor()
 namespace user_lib {
 
 template <class T>
-struct atomic_accessor {
-  using offset_policy    = atomic_accessor;
+struct custom_accessor {
+  using offset_policy    = custom_accessor;
   using element_type     = T;
   using reference        = T&;
   using data_handle_type = T*;
 
-  _CCCL_HIDE_FROM_ABI constexpr atomic_accessor() noexcept = default;
+  _CCCL_HIDE_FROM_ABI constexpr custom_accessor() noexcept = default;
 
   _CCCL_TEMPLATE(class _Other)
   _CCCL_REQUIRES(cuda::std::is_convertible_v<_Other (*)[], element_type (*)[]>)
-  _CCCL_API constexpr atomic_accessor(atomic_accessor<_Other>) noexcept {}
+  _CCCL_API constexpr custom_accessor(custom_accessor<_Other>) noexcept {}
 
   [[nodiscard]] _CCCL_API constexpr reference
   access(data_handle_type __p, cuda::std::size_t __i) const noexcept { return __p[__i]; }
@@ -87,12 +87,12 @@ struct atomic_accessor {
   offset(data_handle_type __p, cuda::std::size_t __i) const noexcept { return __p + __i; }
 };
 
-// Author-provided ADL hook. Found via ADL on atomic_accessor<T>.
+// Author-provided ADL hook. Found via ADL on custom_accessor<T>.
 // Author-provided ADL hook: a free function named `const_view` in the
 // accessor's own namespace. cuda::std::const_view finds it via ADL.
 template <class T>
-_CCCL_API constexpr atomic_accessor<const T>
-const_view(atomic_accessor<T>) noexcept
+_CCCL_API constexpr custom_accessor<const T>
+const_view(custom_accessor<T>) noexcept
 {
   return {};
 }
@@ -102,7 +102,7 @@ const_view(atomic_accessor<T>) noexcept
 __host__ __device__ void scenario2_adl_hook()
 {
   using E  = cuda::std::extents<int, 4>;
-  using A  = user_lib::atomic_accessor<double>;
+  using A  = user_lib::custom_accessor<double>;
   using MD = cuda::std::mdspan<double, E, cuda::std::layout_right, A>;
 
   double storage[4] = {1, 2, 3, 4};
@@ -112,7 +112,7 @@ __host__ __device__ void scenario2_adl_hook()
   using RO = decltype(ro);
 
   static_assert(cuda::std::is_same_v<typename RO::accessor_type,
-                                     user_lib::atomic_accessor<const double>>);
+                                     user_lib::custom_accessor<const double>>);
   static_assert(cuda::std::is_same_v<typename RO::element_type, const double>);
 
   assert(ro.data_handle() == md.data_handle());
@@ -220,12 +220,34 @@ __host__ __device__ void composition_default_accessor()
   double storage[20]{};
   MD md{storage, E{}};
 
-  auto left  = cuda::std::submdspan(cuda::std::const_view(md),
-                                    cuda::std::full_extent, 0);
-  auto right = cuda::std::const_view(
-                 cuda::std::submdspan(md, cuda::std::full_extent, 0));
+  [[maybe_unused]] auto left  = cuda::std::submdspan(cuda::std::const_view(md),
+                                                     cuda::std::full_extent, 0);
+  [[maybe_unused]] auto right = cuda::std::const_view(
+                                  cuda::std::submdspan(md, cuda::std::full_extent, 0));
 
   static_assert(cuda::std::is_same_v<decltype(left), decltype(right)>);
+}
+
+// Non-trivial offset_policy case: aligned_accessor<T, N>::offset_policy is
+// default_accessor<T>, so submdspan drops the alignment tag. Both paths of
+// (const_view, submdspan) must still yield type-equivalent results.
+__host__ __device__ void composition_aligned_accessor()
+{
+  using E  = cuda::std::extents<int, 4, 5>;
+  using A  = cuda::std::aligned_accessor<double, 32>;
+  using MD = cuda::std::mdspan<double, E, cuda::std::layout_right, A>;
+
+  alignas(32) double storage[20]{};
+  MD md{storage, E{}, A{}};
+
+  [[maybe_unused]] auto left  = cuda::std::submdspan(cuda::std::const_view(md),
+                                                     cuda::std::full_extent, 0);
+  [[maybe_unused]] auto right = cuda::std::const_view(
+                                  cuda::std::submdspan(md, cuda::std::full_extent, 0));
+
+  static_assert(cuda::std::is_same_v<decltype(left), decltype(right)>);
+  static_assert(cuda::std::is_same_v<typename decltype(left)::accessor_type,
+                                     cuda::std::default_accessor<const double>>);
 }
 
 int main(int, char**)
@@ -235,5 +257,6 @@ int main(int, char**)
   scenario2_adl_hook();
   scenario3_wrap_and_hook();
   composition_default_accessor();
+  composition_aligned_accessor();
   return 0;
 }
