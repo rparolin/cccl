@@ -21,7 +21,7 @@ DNNNN ("Customization Point for a const view of `std::mdspan`", motivating consu
 
 `std::atomic_ref` does not interoperate with plain references through the `common_reference_with` machinery. In current C++26, *every* non-identity `common_reference_with` query involving `atomic_ref` against `T&`, `const T&`, `atomic_ref<T>`, or `atomic_ref<const T>` — same-const and cross-const alike — evaluates to `false`.
 
-This paper proposes six `basic_common_reference` partial specializations in `<atomic>` that close the full gap. The resolved common type is `atomic_ref<T>` when both operands are at the same non-const element type, and `atomic_ref<const T>` otherwise. The design preserves proxy semantics across the common-reference relation: when either operand is an atomic reference, the common reference is also an atomic reference, at the stricter of the two const-qualifications.
+This paper proposes six `basic_common_reference` partial specializations in `<atomic>` that close the full gap. The resolved common type is `atomic_ref<T>` when both operands are at the same non-const element type, and `atomic_ref<const T>` otherwise — preserving proxy semantics across the common-reference relation.
 
 ---
 
@@ -150,7 +150,7 @@ The change is well-scoped enough that an LWG issue looked plausible. Rejected: t
 
 ### Wait for P2689R3 to carry the wording
 
-P2689R3 proposes `basic_atomic_accessor` for mdspan and is a natural collaborator. Deferring the `basic_common_reference` work to a later revision of P2689 was rejected because P2689R3's scope is accessors, not the cross-reference-type relation on `atomic_ref` itself. The specializations here belong in `<atomic>` regardless of whether P2689R3 ships, and the non-mdspan motivations are independent. *See Coordination with P2689R3 below.*
+Rejected because P2689R3's scope is accessors, not `common_reference_with` on `atomic_ref` itself. The specializations here belong in `<atomic>` regardless of whether P2689R3 ships; the non-mdspan motivations are independent.
 
 ---
 
@@ -168,7 +168,7 @@ A program that has written its own namespace-scope `basic_common_reference` spec
 
 A libcudacxx-based design-demonstration is implemented on the CCCL branch `feature/mdspan-const-accessor-cp-design`. The prototype exercises the proposed specializations against a minimal `fake_atomic_ref<T>` proxy type that mimics the C++26 `atomic_ref` shape (converting constructor from `atomic_ref<T>` to `atomic_ref<const T>`, construction from `T&` and `const T&`). With the six specializations in place, all affected `common_reference_with` checks succeed; without them, the checks fail as they do against the standard library today.
 
-The atomic-side change is small: six partial specializations, a Mandates cross-reference, a feature-test macro, and a stable-name subclause. No changes to `atomic_ref`'s class definition or operations. Heavier implementation experience lives in the companion mdspan paper.
+Heavier implementation experience — the customization point object itself — lives in the companion mdspan paper.
 
 The prototype is host-only for the specialized proxy type. On libcudacxx, the production `atomic_ref` is available in both host and device code; the specializations are expected to compile identically in both.
 
@@ -176,7 +176,7 @@ The prototype is host-only for the specialized proxy type. On libcudacxx, the pr
 
 ## Wording
 
-*Wording in R0 is approximate. It reflects design intent and the structural shape of the change; it is not LWG-quality. Final revision will include LWG-polished diffs against the latest working draft for `[atomics.syn]` and the new `[atomics.ref.common_reference]` subclause.*
+*Wording in R0 is approximate — design intent and structural shape, not LWG-quality. R1 will include polished diffs for `[atomics.syn]` and the new `[atomics.ref.common_reference]` subclause.*
 
 ### Synopsis diff for `<atomic>`
 
@@ -216,8 +216,7 @@ Proposed content (approximate; LWG to polish):
 > For `basic_common_reference<atomic_ref<T>, T, TQual, UQual>`:
 > `using type = atomic_ref<conditional_t<is_const_v<remove_reference_t<UQual<T>>>, const T, T>>;`
 >
-> For the symmetric `basic_common_reference<T, atomic_ref<T>, TQual, UQual>`:
-> `using type = atomic_ref<conditional_t<is_const_v<remove_reference_t<TQual<T>>>, const T, T>>;`
+> For the symmetric specialization (`basic_common_reference<T, atomic_ref<T>, TQual, UQual>`), the `type` is defined analogously, inspecting `TQual<T>` in place of `UQual<T>`.
 >
 > For all other specializations in this subclause:
 > `using type = atomic_ref<const T>;`
@@ -247,7 +246,7 @@ The placeholder value is editor-assigned at the meeting that approves this paper
 
 ## Coordination with P2689R3
 
-P2689R3 ("Atomic Refs Bound to Memory Orderings & Atomic Accessors") proposes `basic_atomic_accessor<T, MemOrder>` for mdspan. Its authors are natural collaborators: the `basic_common_reference` specializations proposed here are exactly what makes their accessor usable in read-only form alongside the non-const original.
+P2689R3 ("Atomic Refs Bound to Memory Orderings & Atomic Accessors") proposes `basic_atomic_accessor<T, MemOrder>` for mdspan. Its authors are natural collaborators: these specializations are what `basic_atomic_accessor` needs for read-only composition alongside the non-const original.
 
 Two coordination options:
 

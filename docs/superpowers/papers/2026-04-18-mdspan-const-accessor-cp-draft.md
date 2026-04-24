@@ -27,8 +27,6 @@
 
 mdspan's existing converting constructor already covers the common case where an accessor has an implicit `A → A_const` conversion (for example, `default_accessor<T>` in C++26); `std::const_view` is the customization surface for every other accessor. No new casting operation is necessary.
 
-The companion SG1 paper (above) is coordinated with P2689R3 ("Atomic Refs Bound to Memory Orderings & Atomic Accessors"); the coordination discussion lives there.
-
 ---
 
 ## Motivation
@@ -49,11 +47,11 @@ struct atomic_accessor {
 };
 ```
 
-and view a buffer as `mdspan<double, E, L, atomic_accessor<double>>`. But there is no way, in the current standard, to construct a read-only view of that same data with `atomic_ref<const double>` as its reference. Users must manually spell the const-accessor and data-handle types every time they need a read-only view — and for a custom accessor the required conversions are not always even available.
+and view a buffer as `mdspan<double, E, L, atomic_accessor<double>>`. But there is no way, in the current standard, to construct a read-only view of that same data with `atomic_ref<const double>` as its reference. Users must manually spell the const-accessor and data-handle types, and for custom accessors the required conversions may not exist.
 
 ### The `common_reference_with` gap (handled in a companion paper)
 
-Independently of the mdspan customization point, `common_reference_with` has no specializations for `std::atomic_ref` at all: every non-identity pair (`atomic_ref<T>` against `T&`, `const T&`, `atomic_ref<const T>`, and the mirror combinations) evaluates to `false` in current C++26. That gap blocks the motivating `atomic_ref`-backed case from composing with standard algorithms that require `common_reference_with` across reference types. The gap is closed by a companion SG1 paper, `2026-04-23-atomic-ref-common-reference-draft.md`. This paper assumes that work lands and does not propose it.
+In current C++26, `common_reference_with` has no specializations for `std::atomic_ref`: every non-identity pair (`atomic_ref<T>` against `T&`, `const T&`, `atomic_ref<const T>`, and the mirror combinations) evaluates to `false`. That gap blocks the motivating `atomic_ref`-backed case from composing with standard algorithms. It is closed by a companion SG1 paper (`2026-04-23-atomic-ref-common-reference-draft.md`); this paper assumes that work lands and does not propose it.
 
 ---
 
@@ -69,7 +67,7 @@ For an accessor `A` with `element_type = T`, the **const version** `C` (produced
 4. An mdspan with accessor `C` views the same elements as the original mdspan with accessor `A`.
 5. `C::offset_policy` is itself a const version of `A::offset_policy`, so that `std::submdspan(std::const_view(md), …)` and `std::const_view(std::submdspan(md, …))` yield type-equivalent mdspans.
 
-A `const_view` is a read-only alias of the source's storage, not a snapshot. Reads through the view observe the current value in storage at the time of each read; modifications to the underlying data through the original view, through another accessor, or — for synchronizing proxy references such as `atomic_ref` — through concurrent writes, are visible through subsequent reads. `const_view` imposes no ordering, atomicity, or freshness guarantees beyond those already provided by the source accessor's `reference` type.
+A `const_view` is a read-only alias of the source's storage, not a snapshot. Modifications to the underlying data through the original view, through another accessor, or — for synchronizing proxy references such as `atomic_ref` — through concurrent writes are visible through subsequent reads. `const_view` imposes no ordering, atomicity, or freshness guarantees beyond those already provided by the source accessor's `reference` type.
 
 ### The `const_view` customization point object
 
@@ -82,7 +80,7 @@ namespace std {
 ```
 
 - `std::const_view(md)` where `md` is an `mdspan<T, E, L, A>` returns an `mdspan<const T, E, L, C>` (where `C` is the const counterpart of `A`) over the same data.
-- `std::const_view(acc)` where `acc` is an accessor returns the const counterpart accessor. The `mdspan` overload delegates to this one internally.
+- `std::const_view(acc)` where `acc` is an accessor returns the const counterpart accessor.
 
 #### Customization paths
 
@@ -103,7 +101,7 @@ namespace user_lib {
 }
 ```
 
-This is the niebloid pattern used by `std::ranges::begin`, `std::ranges::size`, `std::views::as_const`, and the `std::execution` CPOs: the CPO is an ADL-poisoned function object in `std::`; users customize by writing a specifically-named ADL-findable free function in their own namespace. The author never opens `namespace std` and never writes a template-specialization.
+This is the niebloid pattern used by `std::ranges::begin`, `std::views::as_const`, and the `std::execution` CPOs: an ADL-poisoned function object in `std::` that users customize by writing a specifically-named free function in their own namespace — no `namespace std` specialization.
 
 **2. Library-provided built-ins.** The standard library provides direct handling for `std::default_accessor<T>` and `std::aligned_accessor<T, N>` — their const counterparts are `std::default_accessor<const T>` and `std::aligned_accessor<const T, N>` respectively.
 
@@ -149,24 +147,14 @@ The user then constructs their mdspan using `my_lib::const_view_adapter<T>` as i
 
 There is a second cost. Once a user switches to the adapter, third-party APIs expecting `mdspan<T, E, L, vendor::gpu_accessor<T>>` no longer accept the adapter-based mdspan without another explicit conversion at the interop boundary. The two worlds no longer share a common mdspan type.
 
-**The design trade-off.** An earlier iteration of this paper included a `const_view_override<A>` trait that users could specialize in `std::` namespace to opt a third-party accessor in at the use site, without wrapping. That trait was rejected (see *Why ADL customization* below) to keep the customization surface uniform with modern standard-library facilities that use ADL rather than `namespace std` specialization. The cost of that rejection falls on exactly the population of users who cannot modify vendor headers. This paper accepts the cost, on the grounds that:
-
-- The wrap-and-hook pattern is explicit and greppable — readers of the user's code see the adapter type and understand where the customization lives.
-- Greenfield code paying this cost pays it once at mdspan construction and then composes naturally.
-- Specializing `std::const_view_override<A>` would have encouraged a pattern where the customization lives far from the types it concerns, in a foreign namespace, and LEWG has moved away from that idiom for good reasons.
-
-The trade-off is real. Users retrofitting existing code over vendor accessors should budget for the refactor; users starting greenfield should construct their mdspans over locally-owned accessors from the outset, at which point the cost disappears.
+**The design trade-off.** An earlier iteration included a `const_view_override<A>` trait users could specialize in `std::` to opt a third-party accessor in at the use site, without wrapping. That trait was rejected (see *Why ADL customization* below) to keep the customization surface uniform with modern standard-library facilities. The cost falls on users who cannot modify vendor headers; the paper accepts it because the wrap-and-hook pattern is explicit and greppable, and because greenfield code constructing over locally-owned accessors pays nothing. Users retrofitting existing code should budget for the refactor.
 
 #### Why ADL customization (and not member-typed aliases or trait specialization)
 
 The single ADL-found `const_view` free function replaces two alternative customization mechanisms that earlier drafts considered:
 
-- **Member-typed alias** (`A::const_accessor_type`) was rejected because it forces every accessor to carry a new library-mandated member and doesn't scale to accessors whose const version is not `Foo<const T>` (see `Why no template-substitution fallback` below).
+- **Member-typed alias** (`A::const_accessor_type`) was rejected because it forces every accessor to carry a new library-mandated member and doesn't scale to accessors whose const version is not `Foo<const T>`.
 - **Trait specialization in `namespace std`** (`std::const_view_override`) was rejected because it mixes the older `std::hash` pattern with the modern CPO pattern, encouraging `namespace std` specialization where a wrapper accessor is the cleaner alternative.
-
-ADL customization is how `std::ranges` and `std::execution` facilities are designed; applying the same idiom here keeps the customization surface uniform across the modern standard library.
-
-The library built-ins are orthogonal to these two: they cover the standard accessors directly so users never write anything in the common case.
 
 #### How `const_view(mdspan)` is implemented
 
@@ -218,10 +206,6 @@ No changes are proposed to `std::default_accessor` or `std::aligned_accessor` th
 
 Both accessors already provide implicit converting constructors between the non-const and const instantiations in C++26; the overload bodies return a default-constructed const instantiation.
 
-### `basic_common_reference` specializations (split into a companion paper)
-
-The `basic_common_reference` specializations for `std::atomic_ref` that make the motivating `atomic_ref`-backed mdspan compose with standard algorithms are proposed separately in `2026-04-23-atomic-ref-common-reference-draft.md` (SG1 audience). This paper assumes that work lands alongside it; see that paper for the specifications, the choice of `type`, and the coordination with P2689R3.
-
 ---
 
 ## Design rationale and considered alternatives
@@ -251,10 +235,6 @@ A member function `mdspan::const_view()` was considered and rejected. Four reaso
 
 One freestanding customization point object is the single source of truth, and matches how every analogous facility in the modern standard library is designed.
 
-### Why split `basic_common_reference` into a companion paper
-
-An earlier draft bundled the `<atomic>` `basic_common_reference` specializations into this paper. They have been split out into `2026-04-23-atomic-ref-common-reference-draft.md` for two reasons: (a) the audience is different (SG1 for the atomic-side work, LEWG for mdspan), and (b) the two pieces are independently useful — the `basic_common_reference` gap is visible in any code that uses `atomic_ref` alongside `T&`, whether or not mdspan is involved. The two papers are expected to progress together; the motivating `atomic_ref`-backed mdspan case needs both landed to compose end-to-end with standard algorithms.
-
 ### Naming the operation — `const_view`, and why not the alternatives
 
 We considered five candidate names and chose **`std::const_view`**. The rejected alternatives and the specific concern for each:
@@ -266,11 +246,11 @@ We considered five candidate names and chose **`std::const_view`**. The rejected
 
 Reusing the name would mislead readers who know the ranges version. They would expect `.base()` to work, expect a wrapper type, expect element-type preservation — and none of those hold. The namespace difference (`std::` vs. `std::ranges::`) does not defuse the confusion: the identifier reads the same in documentation, teaching material, error messages, and search results. Sharing one name between two structurally different operations papers over a real design difference and demands an apologetic "read this paragraph first" explanation that good naming should avoid.
 
-**`std::make_const_view`** — has legitimate precedent via the non-owning adapter factories `std::make_reverse_iterator`, `std::make_move_iterator`, and `std::make_format_args`. Rejected because the dominant `std::make_*` idiom is *owning* factories: `std::make_shared`, `std::make_unique`, `std::make_pair`, `std::make_tuple`, `std::make_optional`, `std::make_any` all allocate or take ownership of newly-constructed objects. A reader encountering `std::make_const_view(md)` cold would likely assume allocation or ownership semantics, neither of which applies to our operation.
+**`std::make_const_view`** — rejected because the dominant `std::make_*` idiom is *owning* factories (`make_shared`, `make_unique`, `make_pair`, `make_tuple`, `make_optional`); cold readers would infer allocation or ownership, neither of which applies here.
 
-**`std::to_const`** — follows the `std::to_X` family (`to_address`, `to_underlying`, `to_string`, `to_chars`, `to_integer`, `to_array`): short and verb-like. Rejected because it reads as parallel to `std::as_const` (from `<utility>`), which is specifically the *shallow* const operation. A name that reads "like as_const but verb-ier" implies shallow semantics; our operation is deep (changes the element type). The name would obscure precisely the property it needs to advertise.
+**`std::to_const`** — rejected because it reads as a verb-ier parallel to `std::as_const` (from `<utility>`), which is specifically the *shallow* operation; the name would obscure precisely the property it needs to advertise.
 
-**`std::view_as_const`** — maximally explicit and avoids all collisions, but uses a verb-noun-qualifier word order that no existing standard-library name follows. Would be a novel naming without an established pattern to cite; the burden of justifying it would distract from the design.
+**`std::view_as_const`** — rejected because verb-noun-qualifier word order has no precedent in the standard library; justifying the novelty would distract from the design.
 
 **`std::const_view`** (selected) — uses the standard's established `const_X` vocabulary (`const_iterator`, `const_reference`, `const_pointer`, `const_iterator_t`, `const_range_reference_t`). No collision with `std::ranges::as_const_view` or `std::views::as_const`. Does not carry the owning-factory connotation of `std::make_*`. No shallow-const confusion.
 
@@ -288,7 +268,6 @@ A libcudacxx prototype of the CPO-based design is implemented on the CCCL fork (
 
 - `cuda::std::const_view` as a customization point object declared in `<cuda/std/mdspan>`, with direct overloads for `cuda::std::default_accessor` and `cuda::std::aligned_accessor`.
 - Author-side customization via ADL-found `const_view` free functions (niebloid pattern, matching `std::ranges::begin`). No `namespace std` specialization path; consumers of uncooperative third-party accessors wrap the vendor type in a local adapter.
-- No nested alias on the standard-library accessors.
 
 The prototype validates that:
 
