@@ -40,12 +40,12 @@ struct atomic_accessor {
   using reference        = std::atomic_ref<T>;
   using data_handle_type = T*;
   using offset_policy    = atomic_accessor;
-  reference access(T* p, std::size_t i) const noexcept { return std::atomic_ref<T>{p[i]}; }
-  T*        offset(T* p, std::size_t i) const noexcept { return p + i; }
+  reference access(T* p, std::size_t i) const noexcept;
+  T*        offset(T* p, std::size_t i) const noexcept;
 };
 ```
 
-and view a buffer as `mdspan<double, E, L, atomic_accessor<double>>`. But there is no way, in the current standard, to construct a read-only view of that same data with `atomic_ref<const double>` as its reference. Users must manually spell the const-accessor and data-handle types, and for custom accessors the required conversions may not exist.
+There is no standard mechanism to construct a read-only view of `mdspan<double, E, L, atomic_accessor<double>>` with `atomic_ref<const double>` as its reference; users must manually spell the const-accessor and data-handle types, and for custom accessors the required conversions may not exist. The same shape arises for any proxy-reference accessor — bit-packing, endian-conversion, P2689R3's `basic_atomic_accessor` — where the read-only counterpart's `reference` differs structurally from the writable one.
 
 ### The `common_reference_with` gap (handled in a companion paper)
 
@@ -63,7 +63,7 @@ For an accessor `A` with `element_type = T`, the **const version** `C` (produced
 2. `C::reference` is the access type for `C::element_type`. For language-reference accessors this is `const T&`; for proxy-reference accessors it is the proxy over `const T` (e.g. `atomic_ref<T>` → `atomic_ref<const T>`).
 3. `C::data_handle_type` is direct-list-initializable from an lvalue of type `A::data_handle_type`, non-narrowing. For the standard accessors this is automatic; accessors with fancy pointer types (device pointers, tagged pointers) must provide the conversion.
 4. An mdspan with accessor `C` views the same elements as the original mdspan with accessor `A`.
-5. `C::offset_policy` is a const version of `A::offset_policy`, so that `std::submdspan` and `std::const_view` commute.
+5. `C::offset_policy` equals `decltype(std::const_view(std::declval<typename A::offset_policy>()))`. This is a precondition on accessor authors: ADL hooks must satisfy it, and it is a *Mandates* on the `std::const_view` overload that consumes the accessor. Without it, `std::submdspan(std::const_view(md), …)` and `std::const_view(std::submdspan(md, …))` are well-formed individually but yield distinct mdspan types — a source-breaking inconsistency for any code that touches both.
 
 A `const_view` is a read-only alias of the source's storage, not a snapshot. Modifications through the original view or concurrent writes through proxy references are visible through subsequent reads. `const_view` imposes no ordering, atomicity, or freshness guarantees beyond those the source accessor's `reference` already provides.
 
@@ -158,16 +158,16 @@ inline constexpr __const_view_impl::const_view_fn const_view{};
 
 ### How users obtain a const view
 
-This paper does **not** propose a new named cast function with an explicit target-type argument. Two existing mechanisms together cover the needs:
+Users have two paths, depending on the accessor:
 
-**1. mdspan's converting constructor.** mdspan's constructor template already accepts another mdspan whose template arguments are pairwise compatible. When an accessor type `A` has an implicit `A → A_const` conversion — for example, `default_accessor<T>` has an implicit conversion to `default_accessor<const T>` in C++26 — the following compiles today with no library change:
+**Implicit converting constructor.** When `A` has an implicit `A → A_const` conversion (for example, C++26's `default_accessor<T> → default_accessor<const T>`), mdspan's existing converting constructor handles the conversion with no library change:
 
 ```cpp
 mdspan<double, E> md = /* ... */;
-mdspan<const double, E> ro = md;   // no cast, no CPO, no ceremony
+mdspan<const double, E> ro = md;
 ```
 
-**2. `std::const_view` CPO.** When the user cannot conveniently spell the target type (for custom accessors with nontrivial template parameters) or wants to make the const-ification explicit at the call site, the CPO is the right tool. The target type is deduced:
+**`std::const_view` CPO.** Otherwise — or when the user prefers explicit const-ification without spelling the target type — the CPO deduces the result:
 
 ```cpp
 mdspan<double, E, L, my_accessor<double>> md = /* ... */;

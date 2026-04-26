@@ -147,9 +147,7 @@ A generic "proxy-reference common-reference" utility that third-party proxy type
 
 ## Alternatives considered
 
-### Resolve to plain references / cover only cross-const pairs
-
-Both are addressed in *Design rationale* and *Why this coverage, not cross-const only* above. The plain-reference alternative is rejected on atomicity-preservation grounds; the cross-const-only alternative is rejected because the same-const gap is equally broken today and a sequential paper would be bound by this one's common-type convention.
+The plain-reference common type and cross-const-only coverage are both rejected; rationale lives in *Design rationale* and *Why this coverage, not cross-const only* above.
 
 ### Ship as an LWG issue against `[atomics.ref.generic]`
 
