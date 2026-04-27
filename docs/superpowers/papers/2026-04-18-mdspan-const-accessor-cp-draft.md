@@ -31,7 +31,7 @@
 
 ### The missing operation
 
-C++26 added `atomic_ref<const T>` via **P3323R1**, enabling `atomic_ref` to bind to const objects and thus support read-only atomic access. **P3860R1** then addressed the remaining conversion gap by ensuring `atomic_ref<T>` and `atomic_ref<const T>` interoperate correctly in common-reference and conversion contexts. This makes `atomic_ref`-based mdspan accessors natural: a user can write
+C++26 added `atomic_ref<const T>` via **P3323R1**, permitting `atomic_ref` to bind to a const object and exposing only the non-mutating operations (`load`, `wait`) on that instantiation. **P3860R1** then closed the constructor asymmetry by adding a converting constructor from `atomic_ref<U>` to `atomic_ref<T>` whenever `U*` is convertible to `T*` — most importantly, `atomic_ref<T>` → `atomic_ref<const T>`. What C++26 did **not** add is a `basic_common_reference` specialization relating `atomic_ref<T>`, `atomic_ref<const T>`, and plain references to the element type; that gap is the subject of the companion paper and is what makes `atomic_ref`-backed mdspan accessors compose end-to-end. This makes `atomic_ref`-based mdspan accessors natural: a user can write
 
 ```cpp
 template <class T>
