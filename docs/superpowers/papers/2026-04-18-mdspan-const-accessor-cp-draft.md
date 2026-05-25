@@ -181,7 +181,7 @@ auto ro = std::const_view(md);
 
 ### Why not overload `std::as_const`
 
-`std::as_const<T>(T&)` in `<utility>` is **shallow** (returns `const T&`), while an mdspan version would be **deep** (returns a new mdspan value with a const element type). Sharing one name for two semantically different operations was rejected in favor of a dedicated `std::const_view` CPO.
+`std::as_const<T>(T&)` in `<utility>` is **shallow** (returns `const T&`), while an mdspan version would be **deep** (returns a new mdspan value with a const element type). One name for both operations would obscure which one a call site is invoking; the proposal uses a distinct identifier, `std::const_view`.
 
 ### Why a CPO, not a named cast function
 
@@ -190,12 +190,12 @@ Early drafts proposed a named cast function template (`std::element_cast<T>(md)`
 - **mdspan's idiom is conversion, not named casts.** mdspan's primary type-changing mechanism is its converting constructor, which kicks in implicitly when the accessor types convert; adding a named cast on top duplicates machinery the library already has. A CPO is an additive customization surface, not a replacement conversion facility.
 - **A named cast needs an explicit target-type argument.** `std::element_cast<const T>(md)` forces the user to spell out the element type at the call site. For common cases that's fine; for custom accessors with elaborate template parameters it's awkward. The CPO deduces the target and avoids that burden.
 
-### Why freestanding, not a member
+### Why a nonmember, not a member
 
 A member function `mdspan::const_view()` was considered and rejected:
 
 - **The customization target is the accessor, not the mdspan.** ADL customization requires a free-function surface on the accessor's namespace; a member on `mdspan` cannot host it. The CPO also needs to accept a bare accessor (`std::const_view(md.accessor())`), which a member on `mdspan` cannot dispatch on. A member would end up as a thin forwarder over the real free-function CPO this paper already proposes.
-- **Standard-library precedent.** `bit_cast`, `as_const`, `forward`, `move`, the ranges adaptors, and modern CPOs are freestanding. A member `mdspan::const_view()` would be the only named type-changing operation on a standard-library value type delivered as a member.
+- **Standard-library precedent.** `bit_cast`, `as_const`, `forward`, `move`, the ranges adaptors, and modern CPOs are nonmember functions. A member `mdspan::const_view()` would be the only named type-changing operation on a standard-library value type delivered as a member.
 
 ### Naming the operation — `const_view`, and why not the alternatives
 
