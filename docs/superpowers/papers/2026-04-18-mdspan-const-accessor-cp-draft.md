@@ -181,7 +181,7 @@ auto ro = std::const_view(md);
 
 ### Why not overload `std::as_const`
 
-`std::as_const<T>(T&)` in `<utility>` is **shallow** (returns `const T&`), while an mdspan version would be **deep** (returns a new mdspan value with a const element type). One name for both operations would obscure which one a call site is invoking; the proposal uses a distinct identifier, `std::const_view`.
+`std::as_const<T>(T&)` in `<utility>` const-qualifies the *handle*: it binds its argument by reference and returns `const T&`, leaving the referenced object's type unchanged. The operation this paper proposes const-qualifies the *referenced elements*: it returns a new `mdspan` value whose `element_type` is `const`-qualified, so reads through the result see the elements as `const T` rather than `T`. No elements are copied — the result aliases the same storage. One name for both operations would obscure which one a call site is invoking; the proposal uses a distinct identifier, `std::const_view`.
 
 ### Why a CPO, not a named cast function
 
